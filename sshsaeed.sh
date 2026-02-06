@@ -1,1202 +1,1271 @@
 #!/bin/bash
-
 ###########################################
-#         SSH Tunnel Manager Panel        #
-#         GitHub: sshsaeed                #
-#         Version: 1.0.0                  #
-###########################################
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-NC='\033[0m' # No Color
-
-# Config file
-CONFIG_FILE="/etc/sshsaeed/config.conf"
-LOG_FILE="/var/log/sshsaeed.log"
-BACKUP_DIR="/etc/sshsaeed/backups"
-
-# Default values
-DEFAULT_TUNNEL_COUNT=3
-DEFAULT_CIPHER="aes128-gcm@openssh.com"
-DEFAULT_PORTS="443,80"
-
-###########################################
-#            Helper Functions             #
+#         SSHSaeed Tunnel Manager         #
+#              Version 2.0                #
+#      Optimized & Resource Efficient     #
+#         github.com/saeedkars            #
 ###########################################
 
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+# تنظیمات امنیتی و بهینه
+set -o pipefail
+export LC_ALL=C
+
+# ═══════════════════════════════════════
+#              ثابت‌های سیستم
+# ═══════════════════════════════════════
+readonly VERSION="2.0"
+readonly SCRIPT_NAME="sshsaeed"
+readonly CONFIG_DIR="/etc/sshsaeed"
+readonly CONFIG_FILE="${CONFIG_DIR}/config.conf"
+readonly TUNNELS_FILE="${CONFIG_DIR}/tunnels.conf"
+readonly BACKUP_DIR="${CONFIG_DIR}/backups"
+readonly LOG_FILE="/var/log/sshsaeed.log"
+readonly SSH_DIR="/root/.ssh"
+readonly KEY_FILE="${SSH_DIR}/sshsaeed_key"
+
+# ═══════════════════════════════════════
+#              کدهای رنگ
+# ═══════════════════════════════════════
+readonly R=$'\e[31m'      # قرمز
+readonly G=$'\e[32m'      # سبز
+readonly Y=$'\e[33m'      # زرد
+readonly B=$'\e[34m'      # آبی
+readonly M=$'\e[35m'      # بنفش
+readonly C=$'\e[36m'      # فیروزه‌ای
+readonly W=$'\e[97m'      # سفید
+readonly N=$'\e[0m'       # ریست
+readonly BD=$'\e[1m'      # بولد
+
+# ═══════════════════════════════════════
+#            توابع کمکی بهینه
+# ═══════════════════════════════════════
+
+# لاگ با سطح‌بندی
+log() {
+    local level="$1" msg="$2"
+    printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$level" "$msg" >> "$LOG_FILE" 2>/dev/null
 }
 
-print_banner() {
-    clear
-    echo -e "${CYAN}"
-    echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                                                           ║"
-    echo "║     ███████╗███████╗██╗  ██╗███████╗ █████╗ ███████╗     ║"
-    echo "║     ██╔════╝██╔════╝██║  ██║██╔════╝██╔══██╗██╔════╝     ║"
-    echo "║     ███████╗███████╗███████║███████╗███████║█████╗       ║"
-    echo "║     ╚════██║╚════██║██╔══██║╚════██║██╔══██║██╔══╝       ║"
-    echo "║     ███████║███████║██║  ██║███████║██║  ██║███████╗     ║"
-    echo "║     ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝     ║"
-    echo "║                                                           ║"
-    echo "║            SSH Tunnel Manager Panel v1.0                  ║"
-    echo "╚═══════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+# پیام‌های رنگی
+msg_ok()   { printf "${G}✓${N} %s\n" "$1"; }
+msg_err()  { printf "${R}✗${N} %s\n" "$1"; }
+msg_info() { printf "${C}ℹ${N} %s\n" "$1"; }
+msg_warn() { printf "${Y}⚠${N} %s\n" "$1"; }
+
+# جداکننده
+line() { printf "${C}%s${N}\n" "════════════════════════════════════════════"; }
+
+# پاک کردن صفحه با حفظ بافر
+cls() { printf '\e[2J\e[H'; }
+
+# ═══════════════════════════════════════
+#               بنر اصلی
+# ═══════════════════════════════════════
+banner() {
+    cls
+    cat << 'EOF'
+   ███████╗███████╗██╗  ██╗    ████████╗██╗   ██╗███╗   ██╗
+   ██╔════╝██╔════╝██║  ██║    ╚══██╔══╝██║   ██║████╗  ██║
+   ███████╗███████╗███████║       ██║   ██║   ██║██╔██╗ ██║
+   ╚════██║╚════██║██╔══██║       ██║   ██║   ██║██║╚██╗██║
+   ███████║███████║██║  ██║       ██║   ╚██████╔╝██║ ╚████║
+   ╚══════╝╚══════╝╚═╝  ╚═╝       ╚═╝    ╚═════╝ ╚═╝  ╚═══╝
+EOF
+    printf "${C}%s${N}\n" "        ══════════════════════════════════════"
+    printf "${W}           SSH Tunnel Manager v${VERSION}${N}\n"
+    printf "${Y}              github.com/saeedkars${N}\n"
+    printf "${C}%s${N}\n\n" "        ══════════════════════════════════════"
 }
 
-print_separator() {
-    echo -e "${BLUE}━━━━━━━━━━━${NC}"
-}
-
-press_enter() {
-    echo ""
-    echo -e "${YELLOW}برای ادامه Enter بزنید...${NC}"
-    read
-}
-
+# ═══════════════════════════════════════
+#            چک دسترسی روت
+# ═══════════════════════════════════════
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}این اسکریپت نیاز به دسترسی root دارد!${NC}"
-        echo -e "${YELLOW}لطفاً با sudo اجرا کنید: sudo bash sshsaeed.sh${NC}"
+        msg_err "این اسکریپت نیاز به دسترسی root دارد"
         exit 1
     fi
 }
 
+# ═══════════════════════════════════════
+#          ایجاد دایرکتوری‌ها
+# ═══════════════════════════════════════
+init_dirs() {
+    local dir
+    for dir in "$CONFIG_DIR" "$BACKUP_DIR" "$SSH_DIR"; do
+        [[ -d "$dir" ]] || mkdir -p "$dir"
+    done
+    chmod 700 "$SSH_DIR" 2>/dev/null
+    touch "$LOG_FILE" "$CONFIG_FILE" "$TUNNELS_FILE" 2>/dev/null
+}
+
+# ═══════════════════════════════════════
+#         تشخیص توزیع لینوکس
+# ═══════════════════════════════════════
+detect_os() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_ID="${ID,,}"
+        OS_VER="${VERSION_ID}"
+    elif command -v lsb_release &>/dev/null; then
+        OS_ID=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
+        OS_VER=$(lsb_release -sr)
+    else
+        OS_ID="unknown"
+        OS_VER="0"
+    fi
+}
+
+# ═══════════════════════════════════════
+#          نصب پکیج‌های مورد نیاز
+# ═══════════════════════════════════════
+install_deps() {
+    local pkgs=("openssh-server" "openssh-client" "autossh" "curl" "net-tools")
+    local need_install=()
+    local pkg
+    
+    msg_info "بررسی پکیج‌های مورد نیاز..."
+    
+    for pkg in "${pkgs[@]}"; do
+        if ! dpkg -l "$pkg" &>/dev/null; then
+            need_install+=("$pkg")
+        fi
+    done
+    
+    if [[ ${#need_install[@]} -gt 0 ]]; then
+        msg_info "نصب: ${need_install[*]}"
+        apt-get update -qq
+        apt-get install -y -qq "${need_install[@]}"
+        msg_ok "پکیج‌ها نصب شدند"
+    else
+        msg_ok "همه پکیج‌ها موجود هستند"
+    fi
+}
+
+# ═══════════════════════════════════════
+#         تشخیص نوع سرور
+# ═══════════════════════════════════════
+detect_server_type() {
+    local my_ip iran_test
+    
+    # دریافت IP عمومی
+    my_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || \
+            curl -s --max-time 5 icanhazip.com 2>/dev/null || \
+            curl -s --max-time 5 ipinfo.io/ip 2>/dev/null)
+    
+    [[ -z "$my_ip" ]] && { echo "unknown"; return; }
+    
+    # تست اتصال به سایت ایرانی
+    iran_test=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" http://www.google.com 2>/dev/null)
+    
+    if [[ "$iran_test" != "200" ]]; then
+        echo "iran"
+    else
+        # بررسی با رنج IP ایران
+        if curl -s --max-time 5 "https://ipapi.co/${my_ip}/country/" 2>/dev/null | grep -qi "IR"; then
+            echo "iran"
+        else
+            echo "kharej"
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════
+#            تست پینگ
+# ═══════════════════════════════════════
+test_ping() {
+    local host="$1"
+    local count="${2:-3}"
+    
+    if ping -c "$count" -W 2 "$host" &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# ═══════════════════════════════════════
+#        تست پشتیبانی AES-NI (محلی)
+# ═══════════════════════════════════════
+test_aes_local() {
+    local aes_support=0
+    local openssl_aes=0
+    
+    # چک پشتیبانی CPU از AES-NI
+    if grep -q "aes" /proc/cpuinfo 2>/dev/null; then
+        aes_support=1
+    fi
+    
+    # چک OpenSSL
+    if openssl engine 2>/dev/null | grep -qi "aes"; then
+        openssl_aes=1
+    fi
+    
+    if [[ $aes_support -eq 1 ]]; then
+        msg_ok "CPU از AES-NI پشتیبانی می‌کند"
+        echo "aes128-gcm@openssh.com"
+        return 0
+    else
+        msg_warn "AES-NI پشتیبانی نمی‌شود - استفاده از ChaCha20"
+        echo "chacha20-poly1305@openssh.com"
+        return 1
+    fi
+}
+
+# ═══════════════════════════════════════
+#         تست اتصال SSH
+# ═══════════════════════════════════════
+test_ssh_connection() {
+    local host="$1"
+    local port="${2:-22}"
+    local user="${3:-root}"
+    local timeout="${4:-5}"
+    
+    # تست پورت باز
+    if ! timeout "$timeout" bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null; then
+        msg_err "پورت $port روی $host باز نیست"
+        return 1
+    fi
+    
+    # تست SSH با کلید
+    if [[ -f "$KEY_FILE" ]]; then
+        if ssh -o BatchMode=yes -o ConnectTimeout="$timeout" \
+               -o StrictHostKeyChecking=no -i "$KEY_FILE" \
+               -p "$port" "${user}@${host}" "exit" 2>/dev/null; then
+            msg_ok "اتصال SSH برقرار است"
+            return 0
+        fi
+    fi
+    
+    msg_warn "اتصال SSH نیاز به تنظیم کلید دارد"
+    return 2
+}
+
+# ═══════════════════════════════════════
+#         خواندن تنظیمات
+# ═══════════════════════════════════════
 load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        source "$CONFIG_FILE"
-    else
-        # Set defaults
-        FOREIGN_IP=""
-        IRAN_IP=""
-        TUNNEL_COUNT=$DEFAULT_TUNNEL_COUNT
-        CIPHER=$DEFAULT_CIPHER
-        PORTS=$DEFAULT_PORTS
-        INSTALLED="false"
-    fi
+    [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 }
 
+# ═══════════════════════════════════════
+#         ذخیره تنظیمات
+# ═══════════════════════════════════════
 save_config() {
-    mkdir -p /etc/sshsaeed
-    cat > "$CONFIG_FILE" << EOF
+    cat > "$CONFIG_FILE" << CONF
 # SSHSaeed Configuration
-FOREIGN_IP="$FOREIGN_IP"
-IRAN_IP="$IRAN_IP"
-TUNNEL_COUNT="$TUNNEL_COUNT"
-CIPHER="$CIPHER"
-PORTS="$PORTS"
-INSTALLED="$INSTALLED"
-EOF
-    log_message "Config saved"
+SERVER_TYPE="${SERVER_TYPE:-}"
+KHAREJ_IP="${KHAREJ_IP:-}"
+KHAREJ_PORT="${KHAREJ_PORT:-22}"
+IRAN_IP="${IRAN_IP:-}"
+TUNNEL_USER="${TUNNEL_USER:-tunnel}"
+CONF
+    log "INFO" "Config saved"
 }
 
-show_current_config() {
-    echo -e "${PURPLE}┌─────────────────────────────────────┐${NC}"
-    echo -e "${PURPLE}│       تنظیمات فعلی                  │${NC}"
-    echo -e "${PURPLE}├─────────────────────────────────────┤${NC}"
-    echo -e "${PURPLE}│${NC} سرور خارج:    ${GREEN}${FOREIGN_IP:-تنظیم نشده}${NC}"
-    echo -e "${PURPLE}│${NC} سرور ایران:   ${GREEN}${IRAN_IP:-تنظیم نشده}${NC}"
-    echo -e "${PURPLE}│${NC} تعداد تانل:   ${GREEN}${TUNNEL_COUNT:-3}${NC}"
-    echo -e "${PURPLE}│${NC} رمزنگاری:     ${GREEN}${CIPHER:-aes128-gcm}${NC}"
-    echo -e "${PURPLE}│${NC} پورت‌ها:       ${GREEN}${PORTS:-443,80}${NC}"
-    echo -e "${PURPLE}│${NC} وضعیت نصب:    ${GREEN}${INSTALLED:-false}${NC}"
-    echo -e "${PURPLE}└─────────────────────────────────────┘${NC}"
+# ═══════════════════════════════════════
+#           دریافت IP سرور
+# ═══════════════════════════════════════
+get_server_ip() {
+    local ip
+    ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    [[ -z "$ip" ]] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo "$ip"
 }
 
-###########################################
-#          1. Ping Test                   #
-###########################################
-
-ping_test() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}         تست پینگ سرورها              ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
+# ═══════════════════════════════════════
+#           اعتبارسنجی IP
+# ═══════════════════════════════════════
+valid_ip() {
+    local ip="$1"
+    local regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
     
-    if [[ -z "$FOREIGN_IP" ]]; then
-        echo -e "${RED}IP سرور خارج تنظیم نشده!${NC}"
-        press_enter
-        return
+    if [[ $ip =~ $regex ]]; then
+        local IFS='.'
+        read -ra octets <<< "$ip"
+        for octet in "${octets[@]}"; do
+            [[ $octet -gt 255 ]] && return 1
+        done
+        return 0
     fi
-    
-    echo -e "${YELLOW}در حال تست پینگ به سرور خارج ($FOREIGN_IP)...${NC}"
+    return 1
+}
+# ═══════════════════════════════════════
+#          تنظیم سرور خارج
+# ═══════════════════════════════════════
+setup_kharej() {
+    banner
+    line
+    printf "${W}        تنظیمات سرور خارج (Kharej)${N}\n"
+    line
     echo ""
     
-    if ping -c 4 "$FOREIGN_IP" 2>/dev/null; then
-        echo ""
-        echo -e "${GREEN}✅ اتصال به سرور خارج برقرار است${NC}"
+    SERVER_TYPE="kharej"
+    local my_ip=$(get_server_ip)
+    
+    msg_info "IP این سرور: ${W}${my_ip}${N}"
+    echo ""
+    
+    # دریافت IP سرور ایران
+    while true; do
+        read -p "$(printf "${C}IP سرور ایران: ${N}")" IRAN_IP
+        if valid_ip "$IRAN_IP"; then
+            break
+        fi
+        msg_err "IP نامعتبر است"
+    done
+    
+    # پورت SSH
+    read -p "$(printf "${C}پورت SSH [22]: ${N}")" KHAREJ_PORT
+    KHAREJ_PORT=${KHAREJ_PORT:-22}
+    
+    # نام کاربر تانل
+    read -p "$(printf "${C}نام کاربر تانل [tunnel]: ${N}")" TUNNEL_USER
+    TUNNEL_USER=${TUNNEL_USER:-tunnel}
+    
+    echo ""
+    msg_info "در حال پیکربندی..."
+    echo ""
+    
+    # 1. ایجاد کاربر تانل
+    if ! id "$TUNNEL_USER" &>/dev/null; then
+        useradd -m -s /bin/bash "$TUNNEL_USER" 2>/dev/null
+        msg_ok "کاربر $TUNNEL_USER ایجاد شد"
     else
-        echo ""
-        echo -e "${RED}❌ اتصال به سرور خارج برقرار نیست${NC}"
+        msg_info "کاربر $TUNNEL_USER موجود است"
     fi
     
-    echo ""
-    print_separator
+    # 2. تنظیم SSH
+    local sshd_conf="/etc/ssh/sshd_config"
+    local sshd_backup="${BACKUP_DIR}/sshd_config.bak.$(date +%s)"
     
-    # Test SSH connection
-    echo -e "${YELLOW}در حال تست اتصال SSH...${NC}"
-    if timeout 10 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$FOREIGN_IP" "echo 'SSH OK'" 2>/dev/null; then
-        echo -e "${GREEN}✅ اتصال SSH برقرار است${NC}"
-    else
-        echo -e "${RED}❌ اتصال SSH برقرار نیست (کلید SSH تنظیم نشده یا سرور در دسترس نیست)${NC}"
-    fi
+    cp "$sshd_conf" "$sshd_backup"
     
-    log_message "Ping test executed for $FOREIGN_IP"
-    press_enter
-}
-
-###########################################
-#          2. AES Cipher Test             #
-###########################################
-
-aes_test() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}      تست رمزنگاری AES-128-GCM        ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
+    # تنظیمات بهینه SSH
+    declare -A ssh_settings=(
+        ["Port"]="$KHAREJ_PORT"
+        ["PermitRootLogin"]="yes"
+        ["PubkeyAuthentication"]="yes"
+        ["PasswordAuthentication"]="yes"
+        ["GatewayPorts"]="yes"
+        ["AllowTcpForwarding"]="yes"
+        ["TCPKeepAlive"]="yes"
+        ["ClientAliveInterval"]="30"
+        ["ClientAliveCountMax"]="3"
+        ["MaxSessions"]="100"
+        ["MaxStartups"]="100:30:200"
+    )
     
-    if [[ -z "$FOREIGN_IP" ]]; then
-        echo -e "${RED}IP سرور خارج تنظیم نشده!${NC}"
-        press_enter
-        return
-    fi
+    local key val
+    for key in "${!ssh_settings[@]}"; do
+        val="${ssh_settings[$key]}"
+        if grep -q "^#*${key}" "$sshd_conf"; then
+            sed -i "s/^#*${key}.*/${key} ${val}/" "$sshd_conf"
+        else
+            echo "${key} ${val}" >> "$sshd_conf"
+        fi
+    done
     
-    echo -e "${YELLOW}در حال تست Cipher: $CIPHER${NC}"
-    echo ""
+    msg_ok "SSH پیکربندی شد"
     
-    # Test cipher support
-    echo -e "${BLUE}1. بررسی پشتیبانی سرور از Cipher...${NC}"
-    
-    RESULT=$(timeout 15 ssh -v -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -c "$CIPHER" root@"$FOREIGN_IP" "echo 'CIPHER_TEST_OK'" 2>&1)
-    
-    if echo "$RESULT" | grep -q "CIPHER_TEST_OK"; then
-        echo -e "${GREEN}✅ سرور از $CIPHER پشتیبانی می‌کند${NC}"
-        echo ""
-        echo -e "${BLUE}2. جزئیات اتصال:${NC}"
-        echo "$RESULT" | grep -E "(cipher|kex|mac)" | head -5
-    else
-        echo -e "${RED}❌ خطا در تست Cipher${NC}"
-        echo ""
-        echo -e "${YELLOW}جزئیات خطا:${NC}"
-        echo "$RESULT" | tail -10
-    fi
-    
-    log_message "AES cipher test executed"
-    press_enter
-}
-
-###########################################
-#       3. Setup Foreign Server           #
-###########################################
-
-setup_foreign() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}       تنظیم سرور خارج (Kharej)       ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    echo -e "${YELLOW}IP فعلی سرور خارج: ${GREEN}${FOREIGN_IP:-تنظیم نشده}${NC}"
-    echo ""
-    echo -e "${BLUE}IP جدید سرور خارج را وارد کنید (خالی = بدون تغییر):${NC}"
-    read -r NEW_IP
-    
-    if [[ -n "$NEW_IP" ]]; then
-        FOREIGN_IP="$NEW_IP"
-        save_config
-        echo -e "${GREEN}✅ IP سرور خارج ذخیره شد: $FOREIGN_IP${NC}"
-    fi
-    
-    echo ""
-    print_separator
-    echo ""
-    
-    echo -e "${YELLOW}آیا می‌خواهید سرور خارج را تنظیم کنید؟ (y/n)${NC}"
-    read -r CONFIRM
-    
-    if [[ "$CONFIRM" != "y" ]]; then
-        return
-    fi
-    
-    echo ""
-    echo -e "${BLUE}در حال اتصال به سرور خارج و تنظیم...${NC}"
-    
-    # Commands to run on foreign server
-    ssh -o StrictHostKeyChecking=no root@"$FOREIGN_IP" << 'REMOTE_SCRIPT'
-    
-    echo "=== تنظیم سرور خارج ==="
-    
-    # Update sshd_config
-    echo "در حال تنظیم SSH..."
-    
-    # Enable GatewayPorts
-    sed -i 's/#GatewayPorts no/GatewayPorts yes/' /etc/ssh/sshd_config
-    sed -i 's/GatewayPorts no/GatewayPorts yes/' /etc/ssh/sshd_config
-    grep -q "^GatewayPorts" /etc/ssh/sshd_config || echo "GatewayPorts yes" >> /etc/ssh/sshd_config
-    
-    # Enable TCPKeepAlive
-    sed -i 's/#TCPKeepAlive yes/TCPKeepAlive yes/' /etc/ssh/sshd_config
-    grep -q "^TCPKeepAlive" /etc/ssh/sshd_config || echo "TCPKeepAlive yes" >> /etc/ssh/sshd_config
-    
-    # ClientAliveInterval
-    sed -i 's/#ClientAliveInterval 0/ClientAliveInterval 30/' /etc/ssh/sshd_config
-    grep -q "^ClientAliveInterval" /etc/ssh/sshd_config || echo "ClientAliveInterval 30" >> /etc/ssh/sshd_config
-    
-    # ClientAliveCountMax
-    sed -i 's/#ClientAliveCountMax 3/ClientAliveCountMax 10/' /etc/ssh/sshd_config
-    grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config || echo "ClientAliveCountMax 10" >> /etc/ssh/sshd_config
-    
-    # Restart SSH
+    # 3. ری‌استارت SSH
     systemctl restart sshd
+    msg_ok "سرویس SSH ری‌استارت شد"
     
-    echo "✅ تنظیمات SSH اعمال شد"
-    
-REMOTE_SCRIPT
-
-    if [[ $? -eq 0 ]]; then
-        echo -e "${GREEN}✅ سرور خارج با موفقیت تنظیم شد${NC}"
-        log_message "Foreign server configured: $FOREIGN_IP"
-    else
-        echo -e "${RED}❌ خطا در تنظیم سرور خارج${NC}"
+    # 4. تنظیم فایروال
+    if command -v ufw &>/dev/null; then
+        ufw allow "$KHAREJ_PORT"/tcp &>/dev/null
+        msg_ok "فایروال تنظیم شد"
     fi
     
-    press_enter
-}
-
-###########################################
-#        4. Setup Iran Server             #
-###########################################
-
-setup_iran() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}        تنظیم سرور ایران (Iran)       ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
+    # 5. ایجاد دایرکتوری SSH برای کاربر
+    local user_ssh="/home/${TUNNEL_USER}/.ssh"
+    mkdir -p "$user_ssh"
+    touch "${user_ssh}/authorized_keys"
+    chmod 700 "$user_ssh"
+    chmod 600 "${user_ssh}/authorized_keys"
+    chown -R "${TUNNEL_USER}:${TUNNEL_USER}" "$user_ssh"
     
-    # Get current server IP
-    CURRENT_IP=$(hostname -I | awk '{print $1}')
-    IRAN_IP="$CURRENT_IP"
-    
-    echo -e "${YELLOW}IP این سرور: ${GREEN}$IRAN_IP${NC}"
-    echo ""
-    
-    show_current_config
-    echo ""
-    
-    # Check if foreign IP is set
-    if [[ -z "$FOREIGN_IP" ]]; then
-        echo -e "${RED}❌ ابتدا IP سرور خارج را تنظیم کنید!${NC}"
-        press_enter
-        return
-    fi
-    
-    # Ask for tunnel count
-    echo -e "${BLUE}تعداد تانل‌ها را وارد کنید (پیش‌فرض: $TUNNEL_COUNT):${NC}"
-    read -r NEW_COUNT
-    if [[ -n "$NEW_COUNT" ]] && [[ "$NEW_COUNT" =~ ^[0-9]+$ ]]; then
-        TUNNEL_COUNT="$NEW_COUNT"
-    fi
-    
-    # Ask for ports
-    echo -e "${BLUE}پورت‌ها را وارد کنید (مثال: 443,80) (پیش‌فرض: $PORTS):${NC}"
-    read -r NEW_PORTS
-    if [[ -n "$NEW_PORTS" ]]; then
-        PORTS="$NEW_PORTS"
-    fi
-    
+    # ذخیره تنظیمات
+    KHAREJ_IP="$my_ip"
     save_config
     
     echo ""
-    echo -e "${YELLOW}آیا می‌خواهید تانل‌ها را ایجاد کنید؟ (y/n)${NC}"
-    read -r CONFIRM
+    line
+    printf "${G}✓ سرور خارج با موفقیت پیکربندی شد${N}\n"
+    line
+    echo ""
+    printf "${Y}اطلاعات مهم:${N}\n"
+    printf "  ${C}IP سرور:${N}      %s\n" "$my_ip"
+    printf "  ${C}پورت SSH:${N}     %s\n" "$KHAREJ_PORT"
+    printf "  ${C}کاربر تانل:${N}   %s\n" "$TUNNEL_USER"
+    echo ""
+    printf "${Y}مرحله بعد:${N}\n"
+    printf "  ${W}در سرور ایران اسکریپت را اجرا و گزینه 2 را انتخاب کنید${N}\n"
+    echo ""
     
-    if [[ "$CONFIRM" != "y" ]]; then
+    log "INFO" "Kharej server configured - IP: $my_ip Port: $KHAREJ_PORT"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+}
+
+# ═══════════════════════════════════════
+#          تنظیم سرور ایران
+# ═══════════════════════════════════════
+setup_iran() {
+    banner
+    line
+    printf "${W}         تنظیمات سرور ایران (Iran)${N}\n"
+    line
+    echo ""
+    
+    SERVER_TYPE="iran"
+    local my_ip=$(get_server_ip)
+    
+    msg_info "IP این سرور: ${W}${my_ip}${N}"
+    echo ""
+    
+    # دریافت اطلاعات سرور خارج
+    while true; do
+        read -p "$(printf "${C}IP سرور خارج: ${N}")" KHAREJ_IP
+        if valid_ip "$KHAREJ_IP"; then
+            break
+        fi
+        msg_err "IP نامعتبر است"
+    done
+    
+    read -p "$(printf "${C}پورت SSH سرور خارج [22]: ${N}")" KHAREJ_PORT
+    KHAREJ_PORT=${KHAREJ_PORT:-22}
+    
+    read -p "$(printf "${C}نام کاربر تانل [tunnel]: ${N}")" TUNNEL_USER
+    TUNNEL_USER=${TUNNEL_USER:-tunnel}
+    
+    echo ""
+    msg_info "در حال پیکربندی..."
+    echo ""
+    
+    # 1. تست اتصال
+    printf "  ${C}→${N} تست پینگ به سرور خارج... "
+    if test_ping "$KHAREJ_IP" 2; then
+        printf "${G}OK${N}\n"
+    else
+        printf "${Y}ممکن است ICMP بلاک باشد${N}\n"
+    fi
+    
+    # 2. تست پورت SSH
+    printf "  ${C}→${N} تست پورت SSH... "
+    if timeout 3 bash -c "echo >/dev/tcp/$KHAREJ_IP/$KHAREJ_PORT" 2>/dev/null; then
+        printf "${G}OK${N}\n"
+    else
+        printf "${R}FAIL${N}\n"
+        msg_err "پورت $KHAREJ_PORT روی سرور خارج باز نیست"
+        read -p "$(printf "${C}ادامه بدهم؟ [y/N]: ${N}")" cont
+        [[ ! "$cont" =~ ^[Yy]$ ]] && return
+    fi
+    
+    # 3. ایجاد کلید SSH
+    echo ""
+    if [[ ! -f "$KEY_FILE" ]]; then
+        msg_info "ایجاد کلید SSH..."
+        ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "sshsaeed-tunnel" -q
+        msg_ok "کلید SSH ایجاد شد"
+    else
+        msg_info "کلید SSH موجود است"
+    fi
+    
+    # 4. نمایش کلید عمومی
+    local pubkey=$(cat "${KEY_FILE}.pub")
+    
+    echo ""
+    line
+    printf "${Y}کلید عمومی (این را در سرور خارج اضافه کنید):${N}\n"
+    line
+    echo ""
+    printf "${W}%s${N}\n" "$pubkey"
+    echo ""
+    line
+    
+    # 5. تلاش برای کپی خودکار
+    echo ""
+    read -p "$(printf "${C}آیا تلاش برای کپی خودکار کلید انجام شود؟ [Y/n]: ${N}")" auto_copy
+    
+    if [[ ! "$auto_copy" =~ ^[Nn]$ ]]; then
+        msg_info "در حال کپی کلید... (رمز کاربر $TUNNEL_USER را وارد کنید)"
+        
+        if ssh-copy-id -i "${KEY_FILE}.pub" -p "$KHAREJ_PORT" \
+           -o StrictHostKeyChecking=no "${TUNNEL_USER}@${KHAREJ_IP}" 2>/dev/null; then
+            msg_ok "کلید با موفقیت کپی شد"
+        else
+            echo ""
+            msg_warn "کپی خودکار نشد. کلید را دستی کپی کنید:"
+            echo ""
+            printf "${Y}در سرور خارج این دستور را اجرا کنید:${N}\n"
+            echo ""
+            printf "${C}echo '%s' >> /home/%s/.ssh/authorized_keys${N}\n" "$pubkey" "$TUNNEL_USER"
+            echo ""
+        fi
+    fi
+    
+    # 6. تست AES
+    echo ""
+    msg_info "بررسی پشتیبانی AES-NI..."
+    local cipher=$(test_aes_local)
+    
+    # ذخیره تنظیمات
+    IRAN_IP="$my_ip"
+    save_config
+    
+    echo ""
+    line
+    printf "${G}✓ سرور ایران با موفقیت پیکربندی شد${N}\n"
+    line
+    echo ""
+    printf "${Y}Cipher پیشنهادی:${N} %s\n" "$cipher"
+    echo ""
+    
+    log "INFO" "Iran server configured - Kharej: $KHAREJ_IP:$KHAREJ_PORT"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+}
+
+# ═══════════════════════════════════════
+#            ایجاد تانل جدید
+# ═══════════════════════════════════════
+create_tunnel() {
+    banner
+    line
+    printf "${W}             ایجاد تانل جدید${N}\n"
+    line
+    echo ""
+    
+    load_config
+    
+    # چک تنظیمات اولیه
+    if [[ -z "$KHAREJ_IP" ]]; then
+        msg_err "ابتدا سرور را پیکربندی کنید"
+        sleep 2
         return
     fi
     
-    echo ""
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    echo -e "${BLUE}      مرحله 1: ایجاد کلید SSH         ${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    
-    if [[ ! -f /root/.ssh/id_ed25519 ]]; then
-        echo -e "${YELLOW}در حال ایجاد کلید SSH...${NC}"
-        ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519 -N "" -q
-        echo -e "${GREEN}✅ کلید SSH ایجاد شد${NC}"
-    else
-        echo -e "${GREEN}✅ کلید SSH موجود است${NC}"
+    # چک کلید SSH
+    if [[ ! -f "$KEY_FILE" ]]; then
+        msg_err "کلید SSH موجود نیست. ابتدا سرور ایران را تنظیم کنید"
+        sleep 2
+        return
     fi
     
+    printf "${Y}اطلاعات اتصال:${N}\n"
+    printf "  سرور خارج: ${W}%s:%s${N}\n" "$KHAREJ_IP" "$KHAREJ_PORT"
+    printf "  کاربر:     ${W}%s${N}\n" "$TUNNEL_USER"
     echo ""
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    echo -e "${BLUE}      مرحله 2: کپی کلید به سرور خارج  ${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
     
-    echo -e "${YELLOW}در حال کپی کلید به $FOREIGN_IP...${NC}"
-    echo -e "${CYAN}رمز عبور سرور خارج را وارد کنید:${NC}"
-    ssh-copy-id -o StrictHostKeyChecking=no root@"$FOREIGN_IP"
+    # انتخاب نوع تانل
+    line
+    printf "${Y}نوع تانل را انتخاب کنید:${N}\n"
+    line
+    echo ""
+    printf "  ${G}1)${N} Local Forward   ${C}(پورت محلی ← سرور خارج)${N}\n"
+    printf "  ${G}2)${N} Remote Forward  ${C}(سرور خارج ← پورت محلی)${N}\n"
+    printf "  ${G}3)${N} Dynamic SOCKS   ${C}(پروکسی SOCKS5)${N}\n"
+    printf "  ${G}4)${N} Multi-Port      ${C}(چند پورت همزمان)${N}\n"
+    printf "  ${G}5)${N} Reverse Tunnel  ${C}(دسترسی به ایران از خارج)${N}\n"
+    printf "  ${G}0)${N} بازگشت\n"
+    echo ""
+    
+    read -p "$(printf "${C}انتخاب: ${N}")" ttype
+    
+    [[ "$ttype" == "0" ]] && return
+    
+    local ssh_cmd tunnel_desc local_port remote_port
+    
+    case $ttype in
+        1) # Local Forward
+            echo ""
+            printf "${C}Local Forward: ترافیک پورت محلی به سرور خارج${N}\n"
+            echo ""
+            read -p "$(printf "${C}پورت محلی [8080]: ${N}")" local_port
+            local_port=${local_port:-8080}
+            read -p "$(printf "${C}پورت مقصد [${local_port}]: ${N}")" remote_port
+            remote_port=${remote_port:-$local_port}
+            
+            ssh_cmd="-L 0.0.0.0:${local_port}:127.0.0.1:${remote_port}"
+            tunnel_desc="L:${local_port}→${remote_port}"
+            ;;
+            
+        2) # Remote Forward
+            echo ""
+            printf "${C}Remote Forward: پورت سرور خارج به پورت محلی${N}\n"
+            echo ""
+            read -p "$(printf "${C}پورت در سرور خارج [8080]: ${N}")" remote_port
+            remote_port=${remote_port:-8080}
+            read -p "$(printf "${C}پورت محلی [${remote_port}]: ${N}")" local_port
+            local_port=${local_port:-$remote_port}
+            
+            ssh_cmd="-R 0.0.0.0:${remote_port}:127.0.0.1:${local_port}"
+            tunnel_desc="R:${remote_port}→${local_port}"
+            ;;
+            
+        3) # Dynamic SOCKS
+            echo ""
+            printf "${C}Dynamic SOCKS: ایجاد پروکسی SOCKS5${N}\n"
+            echo ""
+            read -p "$(printf "${C}پورت SOCKS [1080]: ${N}")" local_port
+            local_port=${local_port:-1080}
+            
+            ssh_cmd="-D 0.0.0.0:${local_port}"
+            tunnel_desc="D:SOCKS:${local_port}"
+            ;;
+            
+        4) # Multi-Port
+            echo ""
+            printf "${C}Multi-Port: چند پورت را با کاما جدا کنید${N}\n"
+            printf "${Y}مثال: 80,443,8080${N}\n"
+            echo ""
+            read -p "$(printf "${C}پورت‌ها: ${N}")" ports_input
+            
+            [[ -z "$ports_input" ]] && { msg_err "پورتی وارد نشد"; sleep 2; return; }
+            
+            ssh_cmd=""
+            IFS=',' read -ra ports <<< "$ports_input"
+            for p in "${ports[@]}"; do
+                p=$(echo "$p" | tr -d ' ')
+                ssh_cmd="$ssh_cmd -L 0.0.0.0:${p}:127.0.0.1:${p}"
+            done
+            tunnel_desc="M:${ports_input}"
+            ;;
+            
+        5) # Reverse Tunnel
+            echo ""
+            printf "${C}Reverse Tunnel: دسترسی به این سرور از سرور خارج${N}\n"
+            echo ""
+            read -p "$(printf "${C}پورت در سرور خارج [2222]: ${N}")" remote_port
+            remote_port=${remote_port:-2222}
+            read -p "$(printf "${C}پورت SSH محلی [22]: ${N}")" local_port
+            local_port=${local_port:-22}
+            
+            ssh_cmd="-R 0.0.0.0:${remote_port}:127.0.0.1:${local_port}"
+            tunnel_desc="REV:${remote_port}→${local_port}"
+            ;;
+            
+        *)
+            msg_err "انتخاب نامعتبر"
+            sleep 2
+            return
+            ;;
+    esac
     
     echo ""
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    echo -e "${BLUE}      مرحله 3: ایجاد سرویس‌های تانل   ${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
     
-    # Parse ports
-    IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
+    # انتخاب Cipher
+    line
+    printf "${Y}الگوریتم رمزنگاری:${N}\n"
+    line
+    echo ""
+    printf "  ${G}1)${N} aes128-gcm       ${C}(سریع - نیاز به AES-NI)${N}\n"
+    printf "  ${G}2)${N} aes256-gcm       ${C}(امن‌تر - نیاز به AES-NI)${N}\n"
+    printf "  ${G}3)${N} chacha20-poly1305 ${C}(بدون نیاز به AES-NI)${N}\n"
+    printf "  ${G}4)${N} خودکار          ${C}(تشخیص بهترین)${N}\n"
+    echo ""
     
-    # Create tunnel services
-    for ((i=1; i<=TUNNEL_COUNT; i++)); do
-        echo -e "${YELLOW}ایجاد سرویس tunnel${i}...${NC}"
-        
-        # Build port forwarding arguments
-        PORT_ARGS=""
-        for PORT in "${PORT_ARRAY[@]}"; do
-            LOCAL_PORT=$((10000 + PORT + i - 1))
-            PORT_ARGS="$PORT_ARGS -L ${LOCAL_PORT}:127.0.0.1:${PORT}"
-        done
-        
-        cat > /etc/systemd/system/tunnel${i}.service << EOF
+    read -p "$(printf "${C}انتخاب [4]: ${N}")" cipher_choice
+    cipher_choice=${cipher_choice:-4}
+    
+    local cipher=""
+    case $cipher_choice in
+        1) cipher="aes128-gcm@openssh.com" ;;
+        2) cipher="aes256-gcm@openssh.com" ;;
+        3) cipher="chacha20-poly1305@openssh.com" ;;
+        4) cipher=$(test_aes_local 2>/dev/null) ;;
+    esac
+    
+    # نام تانل
+    echo ""
+    read -p "$(printf "${C}نام تانل: ${N}")" tunnel_name
+    tunnel_name=${tunnel_name:-tunnel_$(date +%s)}
+    tunnel_name=$(echo "$tunnel_name" | tr ' ' '_' | tr -cd '[:alnum:]_-')
+    
+    # ساخت سرویس systemd
+    local service_name="sshsaeed-${tunnel_name}"
+    local service_file="/etc/systemd/system/${service_name}.service"
+    
+    local cipher_opt=""
+    [[ -n "$cipher" ]] && cipher_opt="-o Ciphers=${cipher}"
+    
+    local full_cmd="autossh -M 0 -f -N ${ssh_cmd} ${cipher_opt} -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -i ${KEY_FILE} -p ${KHAREJ_PORT} ${TUNNEL_USER}@${KHAREJ_IP}"
+    
+    cat > "$service_file" << SVCEOF
 [Unit]
-Description=SSH Tunnel ${i} to Foreign Server
-After=network.target
+Description=SSHSaeed Tunnel - ${tunnel_name}
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-ExecStart=/usr/bin/ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=no -o TCPKeepAlive=yes -c ${CIPHER} ${PORT_ARGS} root@${FOREIGN_IP}
+Type=forking
+Environment="AUTOSSH_GATETIME=0"
+Environment="AUTOSSH_POLL=60"
+ExecStart=${full_cmd}
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOF
-        
-        systemctl daemon-reload
-        systemctl enable tunnel${i}.service
-        systemctl restart tunnel${i}.service
-        
-        echo -e "${GREEN}✅ سرویس tunnel${i} ایجاد شد${NC}"
-    done
-    
-    echo ""
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    echo -e "${BLUE}      مرحله 4: تنظیم HAProxy          ${NC}"
-    echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    
-    # Install HAProxy if not installed
-    if ! command -v haproxy &> /dev/null; then
-        echo -e "${YELLOW}در حال نصب HAProxy...${NC}"
-        apt-get update && apt-get install -y haproxy
-    fi
-    
-    # Generate HAProxy config
-    echo -e "${YELLOW}در حال ایجاد کانفیگ HAProxy...${NC}"
-    
-    cat > /etc/haproxy/haproxy.cfg << 'HAPROXY_HEAD'
-global
-    log /dev/log local0
-    log /dev/log local1 notice
-    chroot /var/lib/haproxy
-    stats socket /run/haproxy/admin.sock mode 660 level admin
-    stats timeout 30s
-    user haproxy
-    group haproxy
-    daemon
+SVCEOF
 
-defaults
-    log     global
-    mode    tcp
-    option  tcplog
-    option  dontlognull
-    timeout connect 10s
-    timeout client  1m
-    timeout server  1m
-    retries 3
-
-HAPROXY_HEAD
-
-    # Add frontend and backend for each port
-    for PORT in "${PORT_ARRAY[@]}"; do
-        cat >> /etc/haproxy/haproxy.cfg << EOF
-
-frontend ft_port_${PORT}
-    bind *:${PORT}
-    default_backend bk_port_${PORT}
-
-backend bk_port_${PORT}
-    balance roundrobin
-    option tcp-check
-EOF
-        
-        for ((i=1; i<=TUNNEL_COUNT; i++)); do
-            LOCAL_PORT=$((10000 + PORT + i - 1))
-            echo "    server tunnel${i} 127.0.0.1:${LOCAL_PORT} check inter 5s fall 3 rise 2" >> /etc/haproxy/haproxy.cfg
-        done
-    done
-    
-    # Restart HAProxy
-    systemctl restart haproxy
-    systemctl enable haproxy
-    
-    echo -e "${GREEN}✅ HAProxy تنظیم شد${NC}"
-    
-    INSTALLED="true"
-    save_config
-    
-    echo ""
-    echo -e "${GREEN}═══════════════════════════════════════${NC}"
-    echo -e "${GREEN}    ✅ نصب با موفقیت انجام شد!        ${NC}"
-    echo -e "${GREEN}═══════════════════════════════════════${NC}"
-    
-    log_message "Iran server setup completed with $TUNNEL_COUNT tunnels"
-    press_enter
-}
-
-###########################################
-#        5. Graphical Speed Test          #
-###########################################
-
-graphical_test() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}         تست سرعت گرافیکی             ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    if [[ -z "$FOREIGN_IP" ]]; then
-        echo -e "${RED}IP سرور خارج تنظیم نشده!${NC}"
-        press_enter
-        return
-    fi
-    
-    echo -e "${YELLOW}در حال تست سرعت اتصال...${NC}"
-    echo ""
-    
-    # Test latency
-    echo -e "${BLUE}📊 تست تأخیر (Latency):${NC}"
-    LATENCY=$(ping -c 10 "$FOREIGN_IP" 2>/dev/null | tail -1 | awk -F'/' '{print $5}')
-    
-    if [[ -n "$LATENCY" ]]; then
-        LATENCY_INT=${LATENCY%.*}
-        
-        # Visual bar
-        echo -n "   ["
-        if [[ $LATENCY_INT -lt 50 ]]; then
-            echo -e "${GREEN}████████████████████${NC}] ${GREEN}${LATENCY}ms - عالی!${NC}"
-        elif [[ $LATENCY_INT -lt 100 ]]; then
-            echo -e "${GREEN}███████████████${NC}${YELLOW}█████${NC}] ${YELLOW}${LATENCY}ms - خوب${NC}"
-        elif [[ $LATENCY_INT -lt 200 ]]; then
-            echo -e "${GREEN}██████████${NC}${YELLOW}██████${NC}] ${YELLOW}${LATENCY}ms - متوسط${NC}"
-        else
-            echo -e "${RED}█████${NC}${YELLOW}███████${NC}] ${RED}${LATENCY}ms - ضعیف${NC}"
-        fi
-    else
-        echo -e "${RED}   خطا در تست تأخیر${NC}"
-    fi
-    
-    echo ""
-    
-    # Test bandwidth (simple)
-    echo -e "${BLUE}📊 تست پهنای باند (ساده):${NC}"
-    
-    START=$(date +%s.%N)
-    timeout 10 ssh -o StrictHostKeyChecking=no -c "$CIPHER" root@"$FOREIGN_IP" "dd if=/dev/zero bs=1M count=10 2>/dev/null" > /dev/null 2>&1
-    END=$(date +%s.%N)
-    
-    DURATION=$(echo "$END - $START" | bc 2>/dev/null || echo "10")
-    SPEED=$(echo "scale=2; 10 / $DURATION" | bc 2>/dev/null || echo "1")
-    
-    echo -n "   ["
-    SPEED_INT=${SPEED%.*}
-    if [[ $SPEED_INT -gt 5 ]]; then
-        echo -e "${GREEN}████████████████████${NC}] ${GREEN}${SPEED} MB/s - عالی!${NC}"
-    elif [[ $SPEED_INT -gt 2 ]]; then
-        echo -e "${GREEN}███████████████${NC}${YELLOW}█████${NC}] ${YELLOW}${SPEED} MB/s - خوب${NC}"
-    else
-        echo -e "${YELLOW}██████████${NC}${RED}██████████${NC}] ${RED}${SPEED} MB/s - ضعیف${NC}"
-    fi
-    
-    echo ""
-    
-    # Tunnel status visual
-    echo -e "${BLUE}📊 وضعیت تانل‌ها:${NC}"
-    for ((i=1; i<=TUNNEL_COUNT; i++)); do
-        STATUS=$(systemctl is-active tunnel${i}.service 2>/dev/null)
-        if [[ "$STATUS" == "active" ]]; then
-            echo -e "   Tunnel ${i}: [${GREEN}████████████████████${NC}] ${GREEN}فعال ✓${NC}"
-        else
-            echo -e "   Tunnel ${i}: [${RED}████████████████████${NC}] ${RED}غیرفعال ✗${NC}"
-        fi
-    done
-    
-    log_message "Graphical test executed"
-    press_enter
-}
-
-###########################################
-#          6. Change IP                   #
-###########################################
-
-change_ip() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}           تغییر IP سرورها            ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    show_current_config
-    echo ""
-    
-    echo -e "${BLUE}چه چیزی را می‌خواهید تغییر دهید؟${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} IP سرور خارج"
-    echo -e "  ${GREEN}2)${NC} تعداد تانل‌ها"
-    echo -e "  ${GREEN}3)${NC} پورت‌ها"
-    echo -e "  ${GREEN}4)${NC} Cipher رمزنگاری"
-    echo -e "  ${GREEN}0)${NC} بازگشت"
-    echo ""
-    echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-    read -r CHOICE
-    
-    case $CHOICE in
-        1)
-            echo -ne "${BLUE}IP جدید سرور خارج: ${NC}"
-            read -r NEW_IP
-            if [[ -n "$NEW_IP" ]]; then
-                FOREIGN_IP="$NEW_IP"
-                save_config
-                echo -e "${GREEN}✅ IP سرور خارج تغییر کرد${NC}"
-                
-                echo -e "${YELLOW}آیا می‌خواهید سرویس‌ها را بازسازی کنید؟ (y/n)${NC}"
-                read -r REBUILD
-                if [[ "$REBUILD" == "y" ]]; then
-                    setup_iran
-                fi
-            fi
-            ;;
-        2)
-            echo -ne "${BLUE}تعداد جدید تانل‌ها: ${NC}"
-            read -r NEW_COUNT
-            if [[ -n "$NEW_COUNT" ]] && [[ "$NEW_COUNT" =~ ^[0-9]+$ ]]; then
-                # Stop old tunnels
-                for ((i=1; i<=TUNNEL_COUNT; i++)); do
-                    systemctl stop tunnel${i}.service 2>/dev/null
-                    systemctl disable tunnel${i}.service 2>/dev/null
-                    rm -f /etc/systemd/system/tunnel${i}.service
-                done
-                
-                TUNNEL_COUNT="$NEW_COUNT"
-                save_config
-                echo -e "${GREEN}✅ تعداد تانل‌ها تغییر کرد به $TUNNEL_COUNT${NC}"
-                
-                echo -e "${YELLOW}آیا می‌خواهید سرویس‌ها را بازسازی کنید؟ (y/n)${NC}"
-                read -r REBUILD
-                if [[ "$REBUILD" == "y" ]]; then
-                    setup_iran
-                fi
-            fi
-            ;;
-        3)
-            echo -ne "${BLUE}پورت‌های جدید (مثال: 443,80,8080): ${NC}"
-            read -r NEW_PORTS
-            if [[ -n "$NEW_PORTS" ]]; then
-                PORTS="$NEW_PORTS"
-                save_config
-                echo -e "${GREEN}✅ پورت‌ها تغییر کرد${NC}"
-            fi
-            ;;
-        4)
-            echo -e "${BLUE}Cipher های موجود:${NC}"
-            echo "  1) aes128-gcm@openssh.com (پیشنهادی)"
-            echo "  2) aes256-gcm@openssh.com"
-            echo "  3) chacha20-poly1305@openssh.com"
-            echo "  4) aes128-ctr"
-            echo "  5) aes256-ctr"
-            echo -ne "${YELLOW}انتخاب کنید (1-5): ${NC}"
-            read -r CIPHER_CHOICE
-            
-            case $CIPHER_CHOICE in
-                1) CIPHER="aes128-gcm@openssh.com" ;;
-                2) CIPHER="aes256-gcm@openssh.com" ;;
-                3) CIPHER="chacha20-poly1305@openssh.com" ;;
-                4) CIPHER="aes128-ctr" ;;
-                5) CIPHER="aes256-ctr" ;;
-            esac
-            
-            save_config
-            echo -e "${GREEN}✅ Cipher تغییر کرد به: $CIPHER${NC}"
-            ;;
-        0)
-            return
-            ;;
-    esac
-    
-    press_enter
-}
-
-###########################################
-#          7. Show Status                 #
-###########################################
-
-show_status() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}          وضعیت سیستم                 ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    show_current_config
-    echo ""
-    
-    # Tunnel Services Status
-    echo -e "${BLUE}┌─────────────────────────────────────┐${NC}"
-    echo -e "${BLUE}│      وضعیت سرویس‌های تانل          │${NC}"
-    echo -e "${BLUE}├─────────────────────────────────────┤${NC}"
-    
-    for ((i=1; i<=TUNNEL_COUNT; i++)); do
-        STATUS=$(systemctl is-active tunnel${i}.service 2>/dev/null)
-        if [[ "$STATUS" == "active" ]]; then
-            UPTIME=$(systemctl show tunnel${i}.service --property=ActiveEnterTimestamp 2>/dev/null | cut -d'=' -f2)
-            echo -e "${BLUE}│${NC} Tunnel ${i}: ${GREEN}● فعال${NC} (از $UPTIME)"
-        else
-            echo -e "${BLUE}│${NC} Tunnel ${i}: ${RED}○ غیرفعال${NC}"
-        fi
-    done
-    echo -e "${BLUE}└─────────────────────────────────────┘${NC}"
-    
-    echo ""
-    
-    # HAProxy Status
-    echo -e "${BLUE}┌─────────────────────────────────────┐${NC}"
-    echo -e "${BLUE}│         وضعیت HAProxy              │${NC}"
-    echo -e "${BLUE}├─────────────────────────────────────┤${NC}"
-    
-    HAPROXY_STATUS=$(systemctl is-active haproxy 2>/dev/null)
-    if [[ "$HAPROXY_STATUS" == "active" ]]; then
-        echo -e "${BLUE}│${NC} HAProxy: ${GREEN}● فعال${NC}"
-    else
-        echo -e "${BLUE}│${NC} HAProxy: ${RED}○ غیرفعال${NC}"
-    fi
-    echo -e "${BLUE}└─────────────────────────────────────┘${NC}"
-    
-    echo ""
-    
-    # HAProxy Stats
-    if [[ "$HAPROXY_STATUS" == "active" ]]; then
-        echo -e "${BLUE}┌─────────────────────────────────────┐${NC}"
-        echo -e "${BLUE}│       آمار Backend ها              │${NC}"
-        echo -e "${BLUE}├─────────────────────────────────────┤${NC}"
-        
-        echo "show stat" | socat stdio /run/haproxy/admin.sock 2>/dev/null | grep -E "^bk_" | while IFS=',' read -r line; do
-            NAME=$(echo "$line" | cut -d',' -f1-2)
-            STATUS=$(echo "$line" | cut -d',' -f18)
-            if [[ "$STATUS" == "UP" ]]; then
-                echo -e "${BLUE}│${NC} $NAME: ${GREEN}UP${NC}"
-            else
-                echo -e "${BLUE}│${NC} $NAME: ${RED}DOWN${NC}"
-            fi
-        done
-        
-        echo -e "${BLUE}└─────────────────────────────────────┘${NC}"
-    fi
-    
-    echo ""
-    
-    # Port Status
-    echo -e "${BLUE}┌─────────────────────────────────────┐${NC}"
-    echo -e "${BLUE}│         پورت‌های فعال              │${NC}"
-    echo -e "${BLUE}├─────────────────────────────────────┤${NC}"
-    
-    IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
-    for PORT in "${PORT_ARRAY[@]}"; do
-        if ss -tlnp | grep -q ":${PORT} "; then
-            echo -e "${BLUE}│${NC} پورت $PORT: ${GREEN}● باز${NC}"
-        else
-            echo -e "${BLUE}│${NC} پورت $PORT: ${RED}○ بسته${NC}"
-        fi
-    done
-    echo -e "${BLUE}└─────────────────────────────────────┘${NC}"
-    
-    echo ""
-    
-    # System Resources
-    echo -e "${BLUE}┌─────────────────────────────────────┐${NC}"
-    echo -e "${BLUE}│        منابع سیستم                 │${NC}"
-    echo -e "${BLUE}├─────────────────────────────────────┤${NC}"
-    
-    CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    MEM_USAGE=$(free | grep Mem | awk '{printf "%.1f", $3/$2 * 100}')
-    DISK_USAGE=$(df -h / | tail -1 | awk '{print $5}')
-    
-    echo -e "${BLUE}│${NC} CPU:    ${YELLOW}${CPU_USAGE}%${NC}"
-    echo -e "${BLUE}│${NC} Memory: ${YELLOW}${MEM_USAGE}%${NC}"
-    echo -e "${BLUE}│${NC} Disk:   ${YELLOW}${DISK_USAGE}${NC}"
-    echo -e "${BLUE}└─────────────────────────────────────┘${NC}"
-    
-    log_message "Status checked"
-    press_enter
-}
-
-###########################################
-#        8. Port Management               #
-###########################################
-
-port_management() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}          مدیریت پورت‌ها             ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    echo -e "${YELLOW}پورت‌های فعلی: ${GREEN}$PORTS${NC}"
-    echo ""
-    
-    echo -e "${BLUE}چه کاری می‌خواهید انجام دهید؟${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} اضافه کردن پورت جدید"
-    echo -e "  ${GREEN}2)${NC} حذف پورت"
-    echo -e "  ${GREEN}3)${NC} تست پورت"
-    echo -e "  ${GREEN}4)${NC} نمایش پورت‌های باز"
-    echo -e "  ${GREEN}0)${NC} بازگشت"
-    echo ""
-    echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-    read -r CHOICE
-    
-    case $CHOICE in
-        1)
-            echo -ne "${BLUE}پورت جدید را وارد کنید: ${NC}"
-            read -r NEW_PORT
-            if [[ -n "$NEW_PORT" ]] && [[ "$NEW_PORT" =~ ^[0-9]+$ ]]; then
-                if [[ "$PORTS" == *"$NEW_PORT"* ]]; then
-                    echo -e "${YELLOW}این پورت قبلاً اضافه شده!${NC}"
-                else
-                    PORTS="${PORTS},${NEW_PORT}"
-                    save_config
-                    echo -e "${GREEN}✅ پورت $NEW_PORT اضافه شد${NC}"
-                    echo -e "${YELLOW}برای اعمال تغییرات، سرور ایران را مجدداً تنظیم کنید (گزینه 4)${NC}"
-                fi
-            fi
-            ;;
-        2)
-            echo -ne "${BLUE}پورت مورد نظر برای حذف: ${NC}"
-            read -r DEL_PORT
-            if [[ -n "$DEL_PORT" ]]; then
-                PORTS=$(echo "$PORTS" | sed "s/,${DEL_PORT}//g" | sed "s/${DEL_PORT},//g" | sed "s/^${DEL_PORT}$//g")
-                save_config
-                echo -e "${GREEN}✅ پورت $DEL_PORT حذف شد${NC}"
-            fi
-            ;;
-        3)
-            echo -ne "${BLUE}پورت مورد نظر برای تست: ${NC}"
-            read -r TEST_PORT
-            if [[ -n "$TEST_PORT" ]]; then
-                echo -e "${YELLOW}در حال تست پورت $TEST_PORT...${NC}"
-                
-                # Test local
-                if ss -tlnp | grep -q ":${TEST_PORT} "; then
-                    echo -e "${GREEN}✅ پورت $TEST_PORT در سرور ایران باز است${NC}"
-                else
-                    echo -e "${RED}❌ پورت $TEST_PORT در سرور ایران بسته است${NC}"
-                fi
-                
-                # Test remote
-                if [[ -n "$FOREIGN_IP" ]]; then
-                    if timeout 5 bash -c "echo >/dev/tcp/$FOREIGN_IP/$TEST_PORT" 2>/dev/null; then
-                        echo -e "${GREEN}✅ پورت $TEST_PORT در سرور خارج باز است${NC}"
-                    else
-                        echo -e "${RED}❌ پورت $TEST_PORT در سرور خارج بسته است${NC}"
-                    fi
-                fi
-            fi
-            ;;
-        4)
-            echo -e "${BLUE}پورت‌های باز در سیستم:${NC}"
-            ss -tlnp | grep LISTEN
-            ;;
-        0)
-            return
-            ;;
-    esac
-    
-    press_enter
-}
-
-###########################################
-#          9. Uninstall                   #
-###########################################
-
-uninstall() {
-    print_banner
-    echo -e "${RED}═══════════════════════════════════════${NC}"
-    echo -e "${RED}            حذف کامل سیستم            ${NC}"
-    echo -e "${RED}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    echo -e "${YELLOW}⚠️  هشدار: این عمل تمام تانل‌ها و تنظیمات را حذف می‌کند!${NC}"
-    echo ""
-    echo -e "${RED}آیا مطمئن هستید؟ (yes/no)${NC}"
-    read -r CONFIRM
-    
-    if [[ "$CONFIRM" != "yes" ]]; then
-        echo -e "${GREEN}عملیات لغو شد${NC}"
-        press_enter
-        return
-    fi
-    
-    echo ""
-    echo -e "${YELLOW}در حال حذف...${NC}"
-    
-    # Stop and remove tunnel services
-    echo -e "${BLUE}1. حذف سرویس‌های تانل...${NC}"
-    for ((i=1; i<=10; i++)); do
-        systemctl stop tunnel${i}.service 2>/dev/null
-        systemctl disable tunnel${i}.service 2>/dev/null
-        rm -f /etc/systemd/system/tunnel${i}.service
-    done
+    # فعال‌سازی سرویس
     systemctl daemon-reload
-    echo -e "${GREEN}   ✅ سرویس‌های تانل حذف شدند${NC}"
+    systemctl enable "$service_name" &>/dev/null
+    systemctl start "$service_name"
     
-    # Stop HAProxy
-    echo -e "${BLUE}2. توقف HAProxy...${NC}"
-    systemctl stop haproxy 2>/dev/null
-    echo -e "${GREEN}   ✅ HAProxy متوقف شد${NC}"
+    # ذخیره در فایل تانل‌ها
+    echo "${tunnel_name}|${tunnel_desc}|${KHAREJ_IP}|${cipher:-auto}|$(date '+%Y-%m-%d %H:%M')" >> "$TUNNELS_FILE"
     
-    # Remove config
-    echo -e "${BLUE}3. حذف فایل‌های کانفیگ...${NC}"
-    rm -rf /etc/sshsaeed
-    echo -e "${GREEN}   ✅ فایل‌های کانفیگ حذف شدند${NC}"
+    sleep 2
+    echo ""
     
-    # Remove logs
-    echo -e "${BLUE}4. حذف لاگ‌ها...${NC}"
-    rm -f /var/log/sshsaeed.log
-    echo -e "${GREEN}   ✅ لاگ‌ها حذف شدند${NC}"
+    # بررسی وضعیت
+    if systemctl is-active --quiet "$service_name"; then
+        line
+        printf "${G}✓ تانل با موفقیت ایجاد شد${N}\n"
+        line
+        echo ""
+        printf "  ${C}نام:${N}     %s\n" "$tunnel_name"
+        printf "  ${C}نوع:${N}     %s\n" "$tunnel_desc"
+        printf "  ${C}Cipher:${N}  %s\n" "${cipher:-پیش‌فرض}"
+        printf "  ${C}وضعیت:${N}   ${G}فعال${N}\n"
+    else
+        msg_err "مشکل در ایجاد تانل"
+        echo ""
+        journalctl -u "$service_name" --no-pager -n 10
+    fi
     
     echo ""
-    echo -e "${GREEN}═══════════════════════════════════════${NC}"
-    echo -e "${GREEN}    ✅ حذف با موفقیت انجام شد!        ${NC}"
-    echo -e "${GREEN}═══════════════════════════════════════${NC}"
-    
-    log_message "System uninstalled"
-    press_enter
+    log "INFO" "Tunnel created: $tunnel_name ($tunnel_desc)"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
 }
 
-###########################################
-#          10. View Logs                  #
-###########################################
+# ═══════════════════════════════════════
+#            لیست تانل‌ها
+# ═══════════════════════════════════════
+list_tunnels() {
+    banner
+    line
+    printf "${W}            لیست تانل‌ها${N}\n"
+    line
+    echo ""
+    
+    if [[ ! -s "$TUNNELS_FILE" ]]; then
+        msg_warn "هیچ تانلی ثبت نشده است"
+        echo ""
+        read -p "$(printf "${C}Enter بزنید...${N}")"
+        return
+    fi
+    
+    printf "${C}┌─────────────────┬──────────────────┬─────────────────┬──────────┐${N}\n"
+    printf "${C}│${N} %-15s ${C}│${N} %-16s ${C}│${N} %-15s ${C}│${N} %-8s ${C}│${N}\n" "نام" "نوع" "سرور" "وضعیت"
+    printf "${C}├─────────────────┼──────────────────┼─────────────────┼──────────┤${N}\n"
+    
+    while IFS='|' read -r name desc server cipher date; do
+        [[ -z "$name" ]] && continue
+        
+        local status status_color
+        if systemctl is-active --quiet "sshsaeed-$name" 2>/dev/null; then
+            status="فعال"
+            status_color="$G"
+        else
+            status="غیرفعال"
+            status_color="$R"
+        fi
+        
+        printf "${C}│${N} %-15s ${C}│${N} %-16s ${C}│${N} %-15s ${C}│${N} ${status_color}%-8s${N} ${C}│${N}\n" \
+            "$name" "$desc" "$server" "$status"
+    done < "$TUNNELS_FILE"
+    
+    printf "${C}└─────────────────┴──────────────────┴─────────────────┴──────────┘${N}\n"
+    
+    echo ""
+    printf "${Y}دستورات مدیریت:${N}\n"
+    printf "  ${C}systemctl status sshsaeed-<name>${N}   - مشاهده وضعیت\n"
+    printf "  ${C}systemctl restart sshsaeed-<name>${N}  - ری‌استارت\n"
+    printf "  ${C}systemctl stop sshsaeed-<name>${N}     - توقف\n"
+    
+    echo ""
+    log "INFO" "Tunnels listed"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+}
 
-view_logs() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}             مشاهده لاگ‌ها            ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
+# ═══════════════════════════════════════
+#              حذف تانل
+# ═══════════════════════════════════════
+delete_tunnel() {
+    banner
+    line
+    printf "${W}              حذف تانل${N}\n"
+    line
     echo ""
     
-    echo -e "${BLUE}کدام لاگ را می‌خواهید ببینید؟${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} لاگ پنل SSHSaeed"
-    echo -e "  ${GREEN}2)${NC} لاگ HAProxy"
-    echo -e "  ${GREEN}3)${NC} لاگ سرویس‌های تانل"
-    echo -e "  ${GREEN}4)${NC} لاگ SSH"
-    echo -e "  ${GREEN}5)${NC} لاگ سیستم (آخرین 50 خط)"
-    echo -e "  ${GREEN}0)${NC} بازگشت"
-    echo ""
-    echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-    read -r CHOICE
+    if [[ ! -s "$TUNNELS_FILE" ]]; then
+        msg_warn "هیچ تانلی موجود نیست"
+        echo ""
+        read -p "$(printf "${C}Enter بزنید...${N}")"
+        return
+    fi
     
-    case $CHOICE in
-        1)
-            echo -e "${CYAN}═══ لاگ پنل SSHSaeed ═══${NC}"
-            if [[ -f "$LOG_FILE" ]]; then
-                tail -50 "$LOG_FILE"
+    printf "${Y}تانل‌های موجود:${N}\n"
+    echo ""
+    
+    local -a names=()
+    local i=1
+    
+    while IFS='|' read -r name desc server cipher date; do
+        [[ -z "$name" ]] && continue
+        names+=("$name")
+        
+        local status
+        if systemctl is-active --quiet "sshsaeed-$name" 2>/dev/null; then
+            status="${G}[فعال]${N}"
+        else
+            status="${R}[غیرفعال]${N}"
+        fi
+        
+        printf "  ${G}%d)${N} %s ${C}(%s)${N} %b\n" "$i" "$name" "$desc" "$status"
+        ((i++))
+    done < "$TUNNELS_FILE"
+    
+    echo ""
+    read -p "$(printf "${C}شماره تانل برای حذف (0=بازگشت): ${N}")" del_num
+    
+    [[ "$del_num" == "0" || -z "$del_num" ]] && return
+    
+    if [[ ! "$del_num" =~ ^[0-9]+$ ]] || [[ $del_num -lt 1 ]] || [[ $del_num -gt ${#names[@]} ]]; then
+        msg_err "شماره نامعتبر"
+        sleep 2
+        return
+    fi
+    
+    local target="${names[$((del_num-1))]}"
+    
+    echo ""
+    read -p "$(printf "${R}حذف '$target'؟ [y/N]: ${N}")" confirm
+    
+    [[ ! "$confirm" =~ ^[Yy]$ ]] && return
+    
+    # توقف و حذف سرویس
+    systemctl stop "sshsaeed-$target" 2>/dev/null
+    systemctl disable "sshsaeed-$target" 2>/dev/null
+    rm -f "/etc/systemd/system/sshsaeed-$target.service"
+    systemctl daemon-reload
+    
+    # حذف از فایل
+    grep -v "^${target}|" "$TUNNELS_FILE" > "${TUNNELS_FILE}.tmp"
+    mv "${TUNNELS_FILE}.tmp" "$TUNNELS_FILE"
+    
+    echo ""
+    msg_ok "تانل '$target' حذف شد"
+    
+    log "INFO" "Tunnel deleted: $target"
+    sleep 2
+}
+# ═══════════════════════════════════════
+#           وضعیت سیستم
+# ═══════════════════════════════════════
+system_status() {
+    banner
+    line
+    printf "${W}            وضعیت سیستم${N}\n"
+    line
+    echo ""
+    
+    load_config
+    
+    # اطلاعات سرور
+    printf "${Y}▸ اطلاعات سرور${N}\n"
+    printf "  ${C}نوع سرور:${N}    %s\n" "${SERVER_TYPE:-تنظیم نشده}"
+    printf "  ${C}IP:${N}          %s\n" "$(get_server_ip)"
+    printf "  ${C}Hostname:${N}    %s\n" "$(hostname)"
+    printf "  ${C}Uptime:${N}      %s\n" "$(uptime -p 2>/dev/null || uptime)"
+    echo ""
+    
+    # وضعیت SSH
+    printf "${Y}▸ سرویس SSH${N}\n"
+    if systemctl is-active --quiet sshd; then
+        printf "  ${C}وضعیت:${N}       ${G}فعال${N}\n"
+    else
+        printf "  ${C}وضعیت:${N}       ${R}غیرفعال${N}\n"
+    fi
+    printf "  ${C}پورت:${N}        %s\n" "$(grep -E '^Port' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo '22')"
+    echo ""
+    
+    # وضعیت تانل‌ها
+    printf "${Y}▸ تانل‌ها${N}\n"
+    local total=0 active=0
+    
+    if [[ -s "$TUNNELS_FILE" ]]; then
+        while IFS='|' read -r name rest; do
+            [[ -z "$name" ]] && continue
+            ((total++))
+            systemctl is-active --quiet "sshsaeed-$name" && ((active++))
+        done < "$TUNNELS_FILE"
+    fi
+    
+    printf "  ${C}کل:${N}          %d\n" "$total"
+    printf "  ${C}فعال:${N}        ${G}%d${N}\n" "$active"
+    printf "  ${C}غیرفعال:${N}     ${R}%d${N}\n" "$((total - active))"
+    echo ""
+    
+    # منابع سیستم
+    printf "${Y}▸ منابع سیستم${N}\n"
+    printf "  ${C}CPU:${N}         %s\n" "$(grep -c ^processor /proc/cpuinfo) هسته"
+    printf "  ${C}RAM:${N}         %s\n" "$(free -h | awk '/^Mem:/{print $3 "/" $2}')"
+    printf "  ${C}Disk:${N}        %s\n" "$(df -h / | awk 'NR==2{print $3 "/" $2 " (" $5 ")"}')"
+    echo ""
+    
+    # پشتیبانی AES
+    printf "${Y}▸ رمزنگاری${N}\n"
+    if grep -q aes /proc/cpuinfo 2>/dev/null; then
+        printf "  ${C}AES-NI:${N}      ${G}پشتیبانی می‌شود${N}\n"
+        printf "  ${C}Cipher بهینه:${N} aes128-gcm@openssh.com\n"
+    else
+        printf "  ${C}AES-NI:${N}      ${Y}پشتیبانی نمی‌شود${N}\n"
+        printf "  ${C}Cipher بهینه:${N} chacha20-poly1305@openssh.com\n"
+    fi
+    
+    echo ""
+    log "INFO" "System status viewed"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+}
+
+# ═══════════════════════════════════════
+#           تست اتصال
+# ═══════════════════════════════════════
+test_connection() {
+    banner
+    line
+    printf "${W}            تست اتصال${N}\n"
+    line
+    echo ""
+    
+    load_config
+    
+    if [[ -z "$KHAREJ_IP" ]]; then
+        msg_err "ابتدا سرور را پیکربندی کنید"
+        sleep 2
+        return
+    fi
+    
+    printf "${Y}سرور مقصد:${N} %s:%s\n" "$KHAREJ_IP" "$KHAREJ_PORT"
+    echo ""
+    
+    # 1. تست ICMP
+    printf "  ${C}[1/4]${N} تست ICMP (Ping)... "
+    if test_ping "$KHAREJ_IP" 3; then
+        printf "${G}OK${N} "
+        local ping_time=$(ping -c 1 -W 2 "$KHAREJ_IP" 2>/dev/null | grep -oP 'time=\K[\d.]+')
+        printf "${C}(${ping_time}ms)${N}\n"
+    else
+        printf "${Y}BLOCKED${N}\n"
+    fi
+    
+    # 2. تست پورت TCP
+    printf "  ${C}[2/4]${N} تست پورت TCP... "
+    if timeout 5 bash -c "echo >/dev/tcp/$KHAREJ_IP/$KHAREJ_PORT" 2>/dev/null; then
+        printf "${G}OK${N}\n"
+    else
+        printf "${R}FAIL${N}\n"
+        msg_err "پورت $KHAREJ_PORT باز نیست"
+        read -p "$(printf "${C}Enter بزنید...${N}")"
+        return
+    fi
+    
+    # 3. تست SSH Banner
+    printf "  ${C}[3/4]${N} تست SSH Banner... "
+    local ssh_banner=$(timeout 5 bash -c "exec 3<>/dev/tcp/$KHAREJ_IP/$KHAREJ_PORT; cat <&3" 2>/dev/null | head -1)
+    if [[ "$ssh_banner" == SSH-* ]]; then
+        printf "${G}OK${N} ${C}(%s)${N}\n" "$ssh_banner"
+    else
+        printf "${Y}NO BANNER${N}\n"
+    fi
+    
+    # 4. تست اتصال SSH
+    printf "  ${C}[4/4]${N} تست اتصال SSH... "
+    if [[ -f "$KEY_FILE" ]]; then
+        if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+           -i "$KEY_FILE" -p "$KHAREJ_PORT" "${TUNNEL_USER}@${KHAREJ_IP}" "echo OK" 2>/dev/null | grep -q OK; then
+            printf "${G}OK${N}\n"
+        else
+            printf "${R}FAIL${N}\n"
+            echo ""
+            msg_warn "کلید SSH معتبر نیست یا در سرور خارج تنظیم نشده"
+        fi
+    else
+        printf "${Y}NO KEY${N}\n"
+        msg_warn "کلید SSH موجود نیست"
+    fi
+    
+    echo ""
+    
+    # تست سرعت رمزنگاری
+    line
+    printf "${Y}تست سرعت رمزنگاری:${N}\n"
+    line
+    echo ""
+    
+    local ciphers=("aes128-gcm@openssh.com" "aes256-gcm@openssh.com" "chacha20-poly1305@openssh.com")
+    
+    for c in "${ciphers[@]}"; do
+        printf "  ${C}%s:${N} " "$c"
+        
+        if [[ -f "$KEY_FILE" ]]; then
+            local start_time=$(date +%s%N)
+            if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+               -o Ciphers="$c" -i "$KEY_FILE" -p "$KHAREJ_PORT" \
+               "${TUNNEL_USER}@${KHAREJ_IP}" "echo test" &>/dev/null; then
+                local end_time=$(date +%s%N)
+                local duration=$(( (end_time - start_time) / 1000000 ))
+                printf "${G}%dms${N}\n" "$duration"
             else
-                echo -e "${YELLOW}فایل لاگ وجود ندارد${NC}"
+                printf "${R}FAIL${N}\n"
             fi
-            ;;
-        2)
-            echo -e "${CYAN}═══ لاگ HAProxy ═══${NC}"
-            journalctl -u haproxy --no-pager -n 50
-            ;;
-        3)
-            echo -e "${CYAN}═══ لاگ سرویس‌های تانل ═══${NC}"
-            for ((i=1; i<=TUNNEL_COUNT; i++)); do
-                echo -e "${YELLOW}--- Tunnel ${i} ---${NC}"
-                journalctl -u tunnel${i}.service --no-pager -n 10
+        else
+            printf "${Y}نیاز به کلید${N}\n"
+        fi
+    done
+    
+    echo ""
+    log "INFO" "Connection test completed to $KHAREJ_IP"
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+}
+
+# ═══════════════════════════════════════
+#          مدیریت کلید SSH
+# ═══════════════════════════════════════
+manage_keys() {
+    banner
+    line
+    printf "${W}          مدیریت کلید SSH${N}\n"
+    line
+    echo ""
+    
+    printf "  ${G}1)${N} مشاهده کلید عمومی\n"
+    printf "  ${G}2)${N} ایجاد کلید جدید\n"
+    printf "  ${G}3)${N} کپی کلید به سرور خارج\n"
+    printf "  ${G}4)${N} حذف کلیدها\n"
+    printf "  ${G}0)${N} بازگشت\n"
+    echo ""
+    
+    read -p "$(printf "${C}انتخاب: ${N}")" kchoice
+    
+    case $kchoice in
+        1) # مشاهده کلید
+            echo ""
+            if [[ -f "${KEY_FILE}.pub" ]]; then
+                line
+                printf "${Y}کلید عمومی:${N}\n"
+                line
                 echo ""
-            done
-            ;;
-        4)
-            echo -e "${CYAN}═══ لاگ SSH ═══${NC}"
-            journalctl -u sshd --no-pager -n 50
-            ;;
-        5)
-            echo -e "${CYAN}═══ لاگ سیستم ═══${NC}"
-            journalctl --no-pager -n 50
-            ;;
-        0)
-            return
-            ;;
-    esac
-    
-    press_enter
-}
-
-###########################################
-#          11. Backup & Restore           #
-###########################################
-
-backup_restore() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}         بکاپ و بازیابی               ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    echo -e "${BLUE}چه کاری می‌خواهید انجام دهید؟${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} ایجاد بکاپ"
-    echo -e "  ${GREEN}2)${NC} بازیابی از بکاپ"
-    echo -e "  ${GREEN}3)${NC} لیست بکاپ‌ها"
-    echo -e "  ${GREEN}4)${NC} حذف بکاپ"
-    echo -e "  ${GREEN}0)${NC} بازگشت"
-    echo ""
-    echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-    read -r CHOICE
-    
-    case $CHOICE in
-        1)
-            mkdir -p "$BACKUP_DIR"
-            BACKUP_NAME="backup_$(date +%Y%m%d_%H%M%S).tar.gz"
-            
-            echo -e "${YELLOW}در حال ایجاد بکاپ...${NC}"
-            
-            # Create temp directory
-            TEMP_DIR=$(mktemp -d)
-            
-            # Copy configs
-            cp "$CONFIG_FILE" "$TEMP_DIR/" 2>/dev/null
-            cp /etc/haproxy/haproxy.cfg "$TEMP_DIR/" 2>/dev/null
-            
-            # Copy tunnel services
-            for ((i=1; i<=10; i++)); do
-                cp /etc/systemd/system/tunnel${i}.service "$TEMP_DIR/" 2>/dev/null
-            done
-            
-            # Create archive
-            tar -czf "${BACKUP_DIR}/${BACKUP_NAME}" -C "$TEMP_DIR" .
-            
-            # Cleanup
-            rm -rf "$TEMP_DIR"
-            
-            echo -e "${GREEN}✅ بکاپ ایجاد شد: ${BACKUP_DIR}/${BACKUP_NAME}${NC}"
-            log_message "Backup created: $BACKUP_NAME"
-            ;;
-        2)
-            echo -e "${BLUE}بکاپ‌های موجود:${NC}"
-            ls -la "$BACKUP_DIR"/*.tar.gz 2>/dev/null || echo "بکاپی وجود ندارد"
-            echo ""
-            echo -ne "${BLUE}نام فایل بکاپ: ${NC}"
-            read -r BACKUP_FILE
-            
-            if [[ -f "${BACKUP_DIR}/${BACKUP_FILE}" ]]; then
-                echo -e "${YELLOW}در حال بازیابی...${NC}"
-                
-                TEMP_DIR=$(mktemp -d)
-                tar -xzf "${BACKUP_DIR}/${BACKUP_FILE}" -C "$TEMP_DIR"
-                
-                # Restore configs
-                cp "$TEMP_DIR/config.conf" "$CONFIG_FILE" 2>/dev/null
-                cp "$TEMP_DIR/haproxy.cfg" /etc/haproxy/haproxy.cfg 2>/dev/null
-                
-                # Restore tunnel services
-                for ((i=1; i<=10; i++)); do
-                    if [[ -f "$TEMP_DIR/tunnel${i}.service" ]]; then
-                        cp "$TEMP_DIR/tunnel${i}.service" /etc/systemd/system/
-                    fi
-                done
-                
-                systemctl daemon-reload
-                rm -rf "$TEMP_DIR"
-                
-                echo -e "${GREEN}✅ بازیابی انجام شد${NC}"
-                echo -e "${YELLOW}لطفاً سرویس‌ها را ریستارت کنید${NC}"
-                log_message "Backup restored: $BACKUP_FILE"
+                cat "${KEY_FILE}.pub"
+                echo ""
             else
-                echo -e "${RED}فایل بکاپ یافت نشد${NC}"
+                msg_warn "کلیدی موجود نیست"
             fi
             ;;
-        3)
-            echo -e "${BLUE}لیست بکاپ‌ها:${NC}"
-            ls -lah "$BACKUP_DIR"/*.tar.gz 2>/dev/null || echo "بکاپی وجود ندارد"
-            ;;
-        4)
-            echo -e "${BLUE}بکاپ‌های موجود:${NC}"
-            ls -la "$BACKUP_DIR"/*.tar.gz 2>/dev/null || echo "بکاپی وجود ندارد"
-            echo ""
-            echo -ne "${BLUE}نام فایل برای حذف: ${NC}"
-            read -r DEL_FILE
             
-            if [[ -f "${BACKUP_DIR}/${DEL_FILE}" ]]; then
-                rm -f "${BACKUP_DIR}/${DEL_FILE}"
-                echo -e "${GREEN}✅ بکاپ حذف شد${NC}"
+        2) # ایجاد کلید جدید
+            echo ""
+            if [[ -f "$KEY_FILE" ]]; then
+                read -p "$(printf "${R}کلید موجود حذف شود؟ [y/N]: ${N}")" confirm
+                [[ ! "$confirm" =~ ^[Yy]$ ]] && return
+                rm -f "$KEY_FILE" "${KEY_FILE}.pub"
             fi
+            
+            msg_info "در حال ایجاد کلید ED25519..."
+            ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "sshsaeed-$(date +%Y%m%d)" -q
+            msg_ok "کلید جدید ایجاد شد"
+            echo ""
+            printf "${Y}کلید عمومی:${N}\n"
+            cat "${KEY_FILE}.pub"
+            echo ""
             ;;
-        0)
-            return
-            ;;
-    esac
-    
-    press_enter
-}
-
-###########################################
-#          Service Control                #
-###########################################
-
-service_control() {
-    print_banner
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo -e "${CYAN}          کنترل سرویس‌ها             ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════${NC}"
-    echo ""
-    
-    echo -e "${BLUE}چه کاری می‌خواهید انجام دهید؟${NC}"
-    echo ""
-    echo -e "  ${GREEN}1)${NC} ریستارت همه تانل‌ها"
-    echo -e "  ${GREEN}2)${NC} توقف همه تانل‌ها"
-    echo -e "  ${GREEN}3)${NC} شروع همه تانل‌ها"
-    echo -e "  ${GREEN}4)${NC} ریستارت HAProxy"
-    echo -e "  ${GREEN}5)${NC} ریستارت یک تانل خاص"
-    echo -e "  ${GREEN}0)${NC} بازگشت"
-    echo ""
-    echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-    read -r CHOICE
-    
-    case $CHOICE in
-        1)
-            echo -e "${YELLOW}در حال ریستارت تانل‌ها...${NC}"
-            for ((i=1; i<=TUNNEL_COUNT; i++)); do
-                systemctl restart tunnel${i}.service
-                echo -e "${GREEN}✅ Tunnel ${i} ریستارت شد${NC}"
-            done
-            systemctl restart haproxy
-            echo -e "${GREEN}✅ HAProxy ریستارت شد${NC}"
-            ;;
-        2)
-            echo -e "${YELLOW}در حال توقف تانل‌ها...${NC}"
-            for ((i=1; i<=TUNNEL_COUNT; i++)); do
-                systemctl stop tunnel${i}.service
-            done
-            echo -e "${GREEN}✅ همه تانل‌ها متوقف شدند${NC}"
-            ;;
-        3)
-            echo -e "${YELLOW}در حال شروع تانل‌ها...${NC}"
-            for ((i=1; i<=TUNNEL_COUNT; i++)); do
-                systemctl start tunnel${i}.service
-            done
-            echo -e "${GREEN}✅ همه تانل‌ها شروع شدند${NC}"
-            ;;
-        4)
-            systemctl restart haproxy
-            echo -e "${GREEN}✅ HAProxy ریستارت شد${NC}"
-            ;;
-        5)
-            echo -ne "${BLUE}شماره تانل (1-$TUNNEL_COUNT): ${NC}"
-            read -r TUNNEL_NUM
-            if [[ "$TUNNEL_NUM" =~ ^[0-9]+$ ]] && [[ "$TUNNEL_NUM" -ge 1 ]] && [[ "$TUNNEL_NUM" -le "$TUNNEL_COUNT" ]]; then
-                systemctl restart tunnel${TUNNEL_NUM}.service
-                echo -e "${GREEN}✅ Tunnel ${TUNNEL_NUM} ریستارت شد${NC}"
+            
+        3) # کپی کلید
+            echo ""
+            load_config
+            if [[ -z "$KHAREJ_IP" ]]; then
+                msg_err "ابتدا سرور را پیکربندی کنید"
+            elif [[ ! -f "${KEY_FILE}.pub" ]]; then
+                msg_err "کلیدی موجود نیست"
             else
-                echo -e "${RED}شماره نامعتبر${NC}"
+                msg_info "در حال کپی کلید..."
+                ssh-copy-id -i "${KEY_FILE}.pub" -p "${KHAREJ_PORT:-22}" \
+                    -o StrictHostKeyChecking=no "${TUNNEL_USER:-tunnel}@${KHAREJ_IP}"
             fi
             ;;
-        0)
-            return
+            
+        4) # حذف کلیدها
+            echo ""
+            read -p "$(printf "${R}حذف تمام کلیدها؟ [y/N]: ${N}")" confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                rm -f "$KEY_FILE" "${KEY_FILE}.pub"
+                msg_ok "کلیدها حذف شدند"
+            fi
             ;;
+            
+        0) return ;;
     esac
     
-    press_enter
+    echo ""
+    read -p "$(printf "${C}Enter بزنید...${N}")"
 }
 
-###########################################
-#            Main Menu                    #
-###########################################
+# ═══════════════════════════════════════
+#           حذف کامل
+# ═══════════════════════════════════════
+uninstall() {
+    banner
+    line
+    printf "${R}            حذف کامل${N}\n"
+    line
+    echo ""
+    
+    printf "${Y}این عمل موارد زیر را حذف می‌کند:${N}\n"
+    printf "  • تمام تانل‌های فعال\n"
+    printf "  • سرویس‌های systemd\n"
+    printf "  • کلیدهای SSH\n"
+    printf "  • فایل‌های پیکربندی\n"
+    echo ""
+    
+    read -p "$(printf "${R}آیا مطمئن هستید؟ [yes/NO]: ${N}")" confirm
+    
+    [[ "$confirm" != "yes" ]] && return
+    
+    echo ""
+    msg_info "در حال حذف..."
+    
+    # 1. توقف و حذف تانل‌ها
+    if [[ -s "$TUNNELS_FILE" ]]; then
+        while IFS='|' read -r name rest; do
+            [[ -z "$name" ]] && continue
+            systemctl stop "sshsaeed-$name" 2>/dev/null
+            systemctl disable "sshsaeed-$name" 2>/dev/null
+            rm -f "/etc/systemd/system/sshsaeed-$name.service"
+        done < "$TUNNELS_FILE"
+        systemctl daemon-reload
+        msg_ok "تانل‌ها حذف شدند"
+    fi
+    
+    # 2. حذف کلیدها
+    rm -f "$KEY_FILE" "${KEY_FILE}.pub"
+    msg_ok "کلیدها حذف شدند"
+    
+    # 3. حذف دایرکتوری‌ها
+    rm -rf "$CONFIG_DIR"
+    msg_ok "فایل‌های پیکربندی حذف شدند"
+    
+    # 4. حذف لاگ
+    rm -f "$LOG_FILE"
+    
+    echo ""
+    line
+    printf "${G}✓ حذف کامل انجام شد${N}\n"
+    line
+    echo ""
+    printf "${Y}توجه: تنظیمات SSH تغییر نکرد${N}\n"
+    printf "${C}برای بازگردانی SSH:${N}\n"
+    printf "  cp %s/sshd_config.bak.* /etc/ssh/sshd_config\n" "$BACKUP_DIR"
+    printf "  systemctl restart sshd\n"
+    echo ""
+    
+    read -p "$(printf "${C}Enter بزنید...${N}")"
+    exit 0
+}
 
+# ═══════════════════════════════════════
+#            منوی اصلی
+# ═══════════════════════════════════════
 main_menu() {
     while true; do
-        print_banner
-        show_current_config
+        banner
+        line
+        printf "${W}              منوی اصلی${N}\n"
+        line
         echo ""
-        echo -e "${CYAN}═══════════════════════════════════════${NC}"
-        echo -e "${CYAN}              منوی اصلی               ${NC}"
-        echo -e "${CYAN}═══════════════════════════════════════${NC}"
-        echo ""
-        echo -e "  ${GREEN}1)${NC}  تست پینگ سرورها"
-        echo -e "  ${GREEN}2)${NC}  تست رمزنگاری AES"
-        echo -e "  ${GREEN}3)${NC}  تنظیم سرور خارج (Kharej)"
-        echo -e "  ${GREEN}4)${NC}  تنظیم سرور ایران (Iran)"
-        echo -e "  ${GREEN}5)${NC}  تست سرعت گرافیکی"
-        echo -e "  ${GREEN}6)${NC}  تغییر تنظیمات"
-        echo -e "  ${GREEN}7)${NC}  وضعیت سیستم"
-        echo -e "  ${GREEN}8)${NC}  مدیریت پورت‌ها"
-        echo -e "  ${GREEN}9)${NC}  کنترل سرویس‌ها"
-        echo -e "  ${GREEN}10)${NC} مشاهده لاگ‌ها"
-        echo -e "  ${GREEN}11)${NC} بکاپ و بازیابی"
-        echo -e "  ${RED}12)${NC} حذف کامل"
-        echo -e "  ${YELLOW}0)${NC}  خروج"
-        echo ""
-        echo -e "${CYAN}═══════════════════════════════════════${NC}"
-        echo -ne "${YELLOW}انتخاب کنید: ${NC}"
-        read -r CHOICE
         
-        case $CHOICE in
-            1) ping_test ;;
-            2) aes_test ;;
-            3) setup_foreign ;;
-            4) setup_iran ;;
-            5) graphical_test ;;
-            6) change_ip ;;
-            7) show_status ;;
-            8) port_management ;;
-            9) service_control ;;
-            10) view_logs ;;
-            11) backup_restore ;;
-            12) uninstall ;;
+        # نمایش وضعیت سریع
+        load_config 2>/dev/null
+        if [[ -n "$SERVER_TYPE" ]]; then
+            printf "  ${C}نوع سرور:${N} ${G}%s${N}\n" "$SERVER_TYPE"
+            local active_count=0
+            [[ -s "$TUNNELS_FILE" ]] && active_count=$(grep -c '|' "$TUNNELS_FILE" 2>/dev/null || echo 0)
+            printf "  ${C}تانل‌ها:${N}  ${Y}%d${N}\n" "$active_count"
+            echo ""
+        fi
+        
+        printf "${Y}═══ پیکربندی اولیه ═══${N}\n"
+        printf "  ${G}1)${N}  تنظیم سرور خارج (Kharej)\n"
+        printf "  ${G}2)${N}  تنظیم سرور ایران (Iran)\n"
+        echo ""
+        
+        printf "${Y}═══ مدیریت تانل ═══${N}\n"
+        printf "  ${G}3)${N}  ایجاد تانل جدید\n"
+        printf "  ${G}4)${N}  لیست تانل‌ها\n"
+        printf "  ${G}5)${N}  حذف تانل\n"
+        echo ""
+        
+        printf "${Y}═══ ابزارها ═══${N}\n"
+        printf "  ${G}6)${N}  وضعیت سیستم\n"
+        printf "  ${G}7)${N}  تست اتصال\n"
+        printf "  ${G}8)${N}  مدیریت کلید SSH\n"
+        echo ""
+        
+        printf "${Y}═══ سایر ═══${N}\n"
+        printf "  ${G}9)${N}  حذف کامل\n"
+        printf "  ${G}0)${N}  خروج\n"
+        echo ""
+        
+        line
+        read -p "$(printf "${C}انتخاب شما: ${N}")" choice
+        
+        case $choice in
+            1) setup_kharej ;;
+            2) setup_iran ;;
+            3) create_tunnel ;;
+            4) list_tunnels ;;
+            5) delete_tunnel ;;
+            6) system_status ;;
+            7) test_connection ;;
+            8) manage_keys ;;
+            9) uninstall ;;
             0)
-                echo -e "${GREEN}خداحافظ!${NC}"
+                echo ""
+                printf "${G}خداحافظ!${N}\n"
+                echo ""
                 exit 0
                 ;;
             *)
-                echo -e "${RED}گزینه نامعتبر!${NC}"
+                msg_err "انتخاب نامعتبر"
                 sleep 1
                 ;;
         esac
     done
 }
 
-###########################################
-#            Main Execution               #
-###########################################
+# ═══════════════════════════════════════
+#              MAIN
+# ═══════════════════════════════════════
+main() {
+    # چک دسترسی روت
+    check_root
+    
+    # مقداردهی اولیه
+    init_dirs
+    
+    # تشخیص و نصب وابستگی‌ها
+    detect_os
+    install_dependencies
+    
+    # لاگ شروع
+    log "INFO" "SSHSaeed v${VERSION} started"
+    
+    # اجرای منو
+    main_menu
+}
 
-# Check root
-check_root
-
-# Create directories
-mkdir -p /etc/sshsaeed
-mkdir -p "$BACKUP_DIR"
-
-# Load config
-load_config
-
-# Start main menu
-main_menu
-
+# اجرای برنامه
+main "$@"
