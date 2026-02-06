@@ -7,25 +7,25 @@
 #  ███████║███████║██║  ██║███████║██║  ██║███████╗███████╗██████╔╝
 #  ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═════╝
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SSHSaeed Installer v4.0 | AES-128-GCM + HAProxy + AutoSSH
-#  GitHub: https://github.com/sshsaeed/tunnel-manager
+#  SSHSaeed Tunnel Manager - Installer v5.0
+#  GitHub: https://github.com/saeedkars/sshsaeed
+#  Author: SSHSaeed
 # ═══════════════════════════════════════════════════════════════════════════════
 
-set -e
+set -o pipefail
+export LC_ALL=C
+export LANG=C
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              تنظیمات نصب
+#                              تنظیمات اصلی
 # ═══════════════════════════════════════════════════════════════════════════════
-readonly VERSION="4.0"
-readonly REPO_RAW="https://raw.githubusercontent.com/sshsaeed/tunnel-manager/main"
-readonly GITHUB_URL="https://github.com/sshsaeed/tunnel-manager"
-
-# مسیرها (هماهنگ با sshsaeed.sh)
-readonly CONFIG_DIR="/etc/sshsaeed"
-readonly BACKUP_DIR="/etc/sshsaeed/backups"
-readonly LOG_FILE="/var/log/sshsaeed.log"
+# نکته: از SCRIPT_VERSION استفاده می‌شود تا با /etc/os-release تداخل نداشته باشد
+readonly SCRIPT_VERSION="5.0"
+readonly GITHUB_RAW="https://raw.githubusercontent.com/saeedkars/sshsaeed/main"
 readonly INSTALL_PATH="/usr/local/bin/sshsaeed"
-readonly SCRIPT_PATH="/etc/sshsaeed/sshsaeed.sh"
+readonly CONFIG_DIR="/etc/sshsaeed"
+readonly LOG_FILE="/var/log/sshsaeed.log"
+readonly BACKUP_DIR="$CONFIG_DIR/backups"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #                              رنگ‌ها و استایل
@@ -39,14 +39,16 @@ C='\033[0;36m'
 W='\033[1;37m'
 GR='\033[0;90m'
 N='\033[0m'
+BOLD='\033[1m'
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #                              توابع نمایش
 # ═══════════════════════════════════════════════════════════════════════════════
-show_banner() {
+print_banner() {
     clear
     printf "${C}"
-    cat << "EOF"
+    cat << 'EOF'
+
     ╔═══════════════════════════════════════════════════════════════╗
     ║  ███████╗███████╗██╗  ██╗███████╗ █████╗ ███████╗██████╗      ║
     ║  ██╔════╝██╔════╝██║  ██║██╔════╝██╔══██╗██╔════╝██╔══██╗     ║
@@ -55,468 +57,329 @@ show_banner() {
     ║  ███████║███████║██║  ██║███████║██║  ██║███████╗██████╔╝     ║
     ║  ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═════╝      ║
     ╚═══════════════════════════════════════════════════════════════╝
+
 EOF
     printf "${N}"
-    printf "    ${GR}────────────────────────────────────────────────────────────${N}\n"
-    printf "    ${W}Installer v${VERSION}${N}  |  ${C}SSH + HAProxy + AES-128-GCM + AutoSSH${N}\n"
-    printf "    ${GR}GitHub:${N}  ${B}${GITHUB_URL}${N}\n"
-    printf "    ${GR}────────────────────────────────────────────────────────────${N}\n"
-    echo ""
-}
-
-line() {
-    printf "    ${GR}═══════════════════════════════════════════════════════════════${N}\n"
+    printf "    ${W}SSH Tunnel Manager - Installer v${SCRIPT_VERSION}${N}\n"
+    printf "    ${GR}────────────────────────────────────────────${N}\n\n"
 }
 
 print_step() {
-    echo ""
-    line
-    printf "    ${W}📌 %s${N}\n" "$1"
-    line
-    echo ""
+    printf "    ${C}[${1}/${2}]${N} ${3}\n"
 }
 
-msg_ok() { printf "    ${G}[✓]${N} %s\n" "$1"; }
-msg_err() { printf "    ${R}[✗]${N} %s\n" "$1"; }
-msg_warn() { printf "    ${Y}[!]${N} %s\n" "$1"; }
-msg_info() { printf "    ${C}[●]${N} %s\n" "$1"; }
+print_ok() {
+    printf "    ${G}[✓]${N} ${1}\n"
+}
+
+print_err() {
+    printf "    ${R}[✗]${N} ${1}\n"
+}
+
+print_info() {
+    printf "    ${Y}[●]${N} ${1}\n"
+}
+
+print_warn() {
+    printf "    ${Y}[!]${N} ${1}\n"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              بررسی root
+#                              توابع سیستمی
 # ═══════════════════════════════════════════════════════════════════════════════
 check_root() {
-    msg_info "بررسی دسترسی root..."
-    
     if [[ $EUID -ne 0 ]]; then
-        msg_err "این اسکریپت باید با دسترسی root اجرا شود!"
-        echo ""
-        printf "    ${Y}لطفاً با دستور زیر اجرا کنید:${N}\n"
-        printf "    ${W}sudo bash install.sh${N}\n"
-        echo ""
+        print_err "این اسکریپت نیاز به دسترسی root دارد"
+        printf "    ${Y}اجرا کنید:${N} sudo bash install.sh\n"
         exit 1
     fi
+}
+
+# تابع اصلاح‌شده - بدون تداخل با /etc/os-release
+get_os_info() {
+    local os_name=""
+    local os_version=""
     
-    msg_ok "دسترسی root تأیید شد"
+    if [[ -f /etc/os-release ]]; then
+        os_name=$(grep "^NAME=" /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+        os_version=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+        echo "${os_name} ${os_version}"
+    elif [[ -f /etc/debian_version ]]; then
+        echo "Debian $(cat /etc/debian_version)"
+    elif [[ -f /etc/redhat-release ]]; then
+        cat /etc/redhat-release
+    else
+        uname -s -r
+    fi
+}
+
+check_os() {
+    local os_info=$(get_os_info)
+    print_info "سیستم‌عامل: ${os_info}"
+    
+    if [[ -f /etc/debian_version ]]; then
+        return 0
+    elif [[ -f /etc/redhat-release ]]; then
+        print_warn "سیستم RedHat - ممکن است نیاز به تنظیمات اضافی باشد"
+        return 0
+    else
+        print_warn "سیستم‌عامل ناشناخته - ادامه با احتیاط"
+        return 0
+    fi
+}
+
+check_internet() {
+    print_info "بررسی اتصال اینترنت..."
+    
+    if curl -s --connect-timeout 5 https://google.com > /dev/null 2>&1; then
+        print_ok "اتصال اینترنت برقرار است"
+        return 0
+    elif curl -s --connect-timeout 5 https://github.com > /dev/null 2>&1; then
+        print_ok "اتصال اینترنت برقرار است"
+        return 0
+    else
+        print_err "اتصال اینترنت برقرار نیست"
+        return 1
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              تشخیص سیستم‌عامل
+#                              نصب پکیج‌ها
 # ═══════════════════════════════════════════════════════════════════════════════
-detect_os() {
-    msg_info "تشخیص سیستم‌عامل..."
-    
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS=$ID
-        OS_VERSION=$VERSION_ID
-        OS_NAME=$PRETTY_NAME
+detect_package_manager() {
+    if command -v apt-get &> /dev/null; then
+        echo "apt"
+    elif command -v yum &> /dev/null; then
+        echo "yum"
+    elif command -v dnf &> /dev/null; then
+        echo "dnf"
+    elif command -v apk &> /dev/null; then
+        echo "apk"
     else
-        msg_err "امکان تشخیص سیستم‌عامل وجود ندارد"
-        exit 1
+        echo "unknown"
     fi
+}
+
+install_packages() {
+    print_info "نصب پکیج‌های مورد نیاز..."
+    echo ""
     
-    case $OS in
-        ubuntu|debian)
-            PKG_UPDATE="apt-get update -qq"
-            PKG_INSTALL="apt-get install -y -qq"
-            msg_ok "سیستم‌عامل: $OS_NAME"
+    local pm=$(detect_package_manager)
+    local packages=(openssh-client openssh-server autossh haproxy sshpass curl wget net-tools)
+    
+    case $pm in
+        apt)
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq > /dev/null 2>&1
+            
+            for pkg in "${packages[@]}"; do
+                printf "    ${GR}نصب ${pkg}...${N}"
+                if dpkg -l "$pkg" &> /dev/null; then
+                    printf "\r    ${G}[✓]${N} ${pkg} (از قبل نصب)\n"
+                else
+                    if apt-get install -y -qq "$pkg" > /dev/null 2>&1; then
+                        printf "\r    ${G}[✓]${N} ${pkg} نصب شد\n"
+                    else
+                        printf "\r    ${Y}[!]${N} ${pkg} نصب نشد (ادامه...)\n"
+                    fi
+                fi
+            done
             ;;
-        centos|rhel|almalinux|rocky|fedora)
-            if command -v dnf &>/dev/null; then
-                PKG_UPDATE="dnf makecache -q"
-                PKG_INSTALL="dnf install -y -q"
-            else
-                PKG_UPDATE="yum makecache -q"
-                PKG_INSTALL="yum install -y -q"
-            fi
-            msg_ok "سیستم‌عامل: $OS_NAME"
+        yum|dnf)
+            $pm update -y -q > /dev/null 2>&1
+            for pkg in "${packages[@]}"; do
+                printf "    ${GR}نصب ${pkg}...${N}"
+                if $pm install -y -q "$pkg" > /dev/null 2>&1; then
+                    printf "\r    ${G}[✓]${N} ${pkg}\n"
+                else
+                    printf "\r    ${Y}[!]${N} ${pkg} (خطا)\n"
+                fi
+            done
+            ;;
+        apk)
+            apk update > /dev/null 2>&1
+            for pkg in "${packages[@]}"; do
+                apk add --no-cache "$pkg" > /dev/null 2>&1
+            done
             ;;
         *)
-            msg_warn "سیستم‌عامل تست‌نشده: $OS_NAME"
-            PKG_UPDATE="apt-get update -qq"
-            PKG_INSTALL="apt-get install -y -qq"
+            print_err "پکیج منیجر شناسایی نشد"
+            print_info "لطفاً دستی نصب کنید: openssh-server autossh haproxy curl wget"
             ;;
     esac
     
-    # معماری
-    local arch=$(uname -m)
-    msg_ok "معماری: $arch"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              آپدیت سیستم
-# ═══════════════════════════════════════════════════════════════════════════════
-update_system() {
-    msg_info "آپدیت لیست پکیج‌ها..."
-    
-    $PKG_UPDATE >/dev/null 2>&1 || {
-        msg_warn "آپدیت با مشکل مواجه شد، ادامه می‌دهیم..."
-    }
-    
-    msg_ok "لیست پکیج‌ها آپدیت شد"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              نصب وابستگی‌ها
-# ═══════════════════════════════════════════════════════════════════════════════
-install_dependencies() {
-    msg_info "نصب پکیج‌های مورد نیاز..."
     echo ""
+    print_ok "پکیج‌ها بررسی شدند"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#                              دانلود و نصب اسکریپت اصلی
+# ═══════════════════════════════════════════════════════════════════════════════
+download_main_script() {
+    print_info "دانلود اسکریپت اصلی..."
     
-    local packages=(
-        "curl"
-        "wget" 
-        "jq"
-        "bc"
-        "sshpass"
-        "autossh"
-        "haproxy"
-        "openssh-server"
-        "openssh-client"
-        "net-tools"
-        "iptables"
-    )
-    
-    local installed=0
-    local skipped=0
-    
-    for pkg in "${packages[@]}"; do
-        printf "    ${C}[●]${N} نصب %-15s " "$pkg"
-        
-        if $PKG_INSTALL "$pkg" >/dev/null 2>&1; then
-            printf "${G}✓${N}\n"
-            ((installed++))
+    # دانلود فایل اصلی
+    if curl -fsSL "${GITHUB_RAW}/sshsaeed.sh" -o "${INSTALL_PATH}" 2>/dev/null; then
+        print_ok "اسکریپت دانلود شد"
+    else
+        # اگر فایل sshsaeed.sh نبود، از install.sh استفاده کن
+        if curl -fsSL "${GITHUB_RAW}/install.sh" -o "${INSTALL_PATH}" 2>/dev/null; then
+            print_ok "اسکریپت دانلود شد (از install.sh)"
         else
-            printf "${Y}⚠${N} (موجود)\n"
-            ((skipped++))
-        fi
-    done
-    
-    echo ""
-    msg_ok "نصب پکیج‌ها: $installed نصب شد، $skipped از قبل موجود"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              ایجاد دایرکتوری‌ها
-# ═══════════════════════════════════════════════════════════════════════════════
-create_directories() {
-    msg_info "ایجاد ساختار دایرکتوری‌ها..."
-    
-    # دایرکتوری‌های اصلی
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$BACKUP_DIR"
-    mkdir -p "/root/.ssh"
-    
-    # تنظیم مجوزها
-    chmod 755 "$CONFIG_DIR"
-    chmod 700 "$BACKUP_DIR"
-    chmod 700 "/root/.ssh"
-    
-    # ایجاد فایل لاگ
-    touch "$LOG_FILE"
-    chmod 644 "$LOG_FILE"
-    
-    msg_ok "دایرکتوری‌ها ایجاد شد:"
-    printf "    ${GR}├── Config:${N} %s\n" "$CONFIG_DIR"
-    printf "    ${GR}├── Backup:${N} %s\n" "$BACKUP_DIR"
-    printf "    ${GR}└── Log:${N}    %s\n" "$LOG_FILE"
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              دانلود اسکریپت اصلی
-# ═══════════════════════════════════════════════════════════════════════════════
-download_script() {
-    msg_info "دانلود اسکریپت اصلی..."
-    
-    local max_retries=3
-    local retry=0
-    
-    while [[ $retry -lt $max_retries ]]; do
-        if curl -fsSL "${REPO_RAW}/sshsaeed.sh" -o "$SCRIPT_PATH" 2>/dev/null; then
-            # بررسی صحت دانلود
-            if [[ -s "$SCRIPT_PATH" ]] && head -1 "$SCRIPT_PATH" | grep -q "#!/bin/bash"; then
-                chmod +x "$SCRIPT_PATH"
-                msg_ok "اسکریپت اصلی دانلود شد ✓"
-                return 0
+            print_err "خطا در دانلود - تلاش با لینک جایگزین..."
+            
+            # لینک جایگزین
+            if curl -fsSL "https://raw.githubusercontent.com/saeedkars/sshsaeed/main/install.sh" -o "${INSTALL_PATH}" 2>/dev/null; then
+                print_ok "اسکریپت از لینک جایگزین دانلود شد"
+            else
+                print_err "دانلود ناموفق بود"
+                return 1
             fi
         fi
+    fi
+    
+    return 0
+}
+
+fix_script_variables() {
+    print_info "اصلاح متغیرها برای سازگاری..."
+    
+    if [[ -f "${INSTALL_PATH}" ]]; then
+        # اصلاح متغیر VERSION به SCRIPT_VERSION
+        sed -i 's/readonly VERSION=/readonly SCRIPT_VERSION=/g' "${INSTALL_PATH}"
+        sed -i 's/\${VERSION}/\${SCRIPT_VERSION}/g' "${INSTALL_PATH}"
+        sed -i 's/\$VERSION/\$SCRIPT_VERSION/g' "${INSTALL_PATH}"
         
-        ((retry++))
-        msg_warn "تلاش $retry از $max_retries ناموفق..."
-        sleep 2
-    done
-    
-    msg_err "دانلود اسکریپت با شکست مواجه شد"
-    msg_info "لطفاً اتصال اینترنت را بررسی کنید"
-    exit 1
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              ایجاد دستور سیستمی
-# ═══════════════════════════════════════════════════════════════════════════════
-create_command() {
-    msg_info "ایجاد دستور 'sshsaeed'..."
-    
-    # حذف لینک قبلی
-    rm -f "$INSTALL_PATH" 2>/dev/null || true
-    
-    # ایجاد لینک جدید
-    ln -sf "$SCRIPT_PATH" "$INSTALL_PATH"
-    
-    if [[ -x "$INSTALL_PATH" ]]; then
-        msg_ok "دستور 'sshsaeed' ایجاد شد ✓"
+        # اصلاح تابع get_os_info - جایگزینی source با grep
+        sed -i 's/\. \/etc\/os-release/# os-release loaded safely/g' "${INSTALL_PATH}"
+        sed -i 's/source \/etc\/os-release/# os-release loaded safely/g' "${INSTALL_PATH}"
+        
+        # اصلاح استفاده از متغیرهای os-release
+        sed -i 's/echo "\$NAME \$VERSION_ID"/os_n=$(grep "^NAME=" \/etc\/os-release 2>\/dev\/null | cut -d= -f2 | tr -d \x27"\x27); os_v=$(grep "^VERSION_ID=" \/etc\/os-release 2>\/dev\/null | cut -d= -f2 | tr -d \x27"\x27); echo "\$os_n \$os_v"/g' "${INSTALL_PATH}"
+        
+        print_ok "متغیرها اصلاح شدند"
     else
-        msg_warn "ایجاد لینک با مشکل مواجه شد"
-        msg_info "می‌توانید با دستور زیر اجرا کنید: bash $SCRIPT_PATH"
+        print_err "فایل اسکریپت یافت نشد"
+        return 1
     fi
+    
+    return 0
+}
+
+set_permissions() {
+    print_info "تنظیم دسترسی‌ها..."
+    
+    chmod +x "${INSTALL_PATH}"
+    
+    # ایجاد دایرکتوری‌های مورد نیاز
+    mkdir -p "${CONFIG_DIR}" "${BACKUP_DIR}" /root/.ssh
+    chmod 700 "${CONFIG_DIR}" /root/.ssh
+    
+    # ایجاد فایل لاگ
+    touch "${LOG_FILE}"
+    chmod 600 "${LOG_FILE}"
+    
+    print_ok "دسترسی‌ها تنظیم شدند"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              فعال‌سازی BBR
+#                              تنظیمات سرویس‌ها
 # ═══════════════════════════════════════════════════════════════════════════════
-setup_bbr() {
-    msg_info "تنظیم BBR TCP Congestion Control..."
-    
-    local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
-    
-    if [[ "$current_cc" == "bbr" ]]; then
-        msg_ok "BBR از قبل فعال است ✓"
-        return 0
-    fi
-    
-    # بررسی پشتیبانی
-    if ! modprobe tcp_bbr 2>/dev/null; then
-        msg_warn "ماژول BBR در این کرنل موجود نیست"
-        return 0
-    fi
-    
-    # افزودن تنظیمات
-    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf 2>/dev/null; then
-        cat >> /etc/sysctl.conf << 'EOF'
-
-# BBR Configuration - SSHSaeed
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-EOF
-    fi
-    
-    sysctl -p >/dev/null 2>&1 || true
-    
-    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-    if [[ "$current_cc" == "bbr" ]]; then
-        msg_ok "BBR فعال شد ✓"
-    else
-        msg_warn "BBR پس از ریبوت فعال می‌شود"
-    fi
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              بهینه‌سازی SSH
-# ═══════════════════════════════════════════════════════════════════════════════
-optimize_ssh() {
-    msg_info "بهینه‌سازی تنظیمات SSH..."
+configure_ssh() {
+    print_info "پیکربندی SSH..."
     
     local sshd_config="/etc/ssh/sshd_config"
     
-    # پشتیبان‌گیری
-    cp "$sshd_config" "${BACKUP_DIR}/sshd_config.bak.$(date +%s)" 2>/dev/null || true
-    
-    # افزودن تنظیمات بهینه
-    if ! grep -q "# SSHSaeed Optimizations" "$sshd_config" 2>/dev/null; then
-        cat >> "$sshd_config" << 'EOF'
-
-# SSHSaeed Optimizations
-TCPKeepAlive yes
-ClientAliveInterval 30
-ClientAliveCountMax 3
-MaxSessions 100
-GatewayPorts yes
-PermitTunnel yes
-AllowTcpForwarding yes
-EOF
+    if [[ -f "$sshd_config" ]]; then
+        # بکاپ
+        cp "$sshd_config" "${BACKUP_DIR}/sshd_config.backup.$(date +%s)" 2>/dev/null
+        
+        # فعال‌سازی GatewayPorts
+        if ! grep -q "^GatewayPorts yes" "$sshd_config"; then
+            echo "" >> "$sshd_config"
+            echo "# Added by SSHSaeed" >> "$sshd_config"
+            echo "GatewayPorts yes" >> "$sshd_config"
+            echo "TCPKeepAlive yes" >> "$sshd_config"
+            echo "ClientAliveInterval 30" >> "$sshd_config"
+            echo "ClientAliveCountMax 10" >> "$sshd_config"
+        fi
+        
+        # ری‌استارت SSH
+        if systemctl is-active --quiet sshd 2>/dev/null; then
+            systemctl restart sshd
+        elif systemctl is-active --quiet ssh 2>/dev/null; then
+            systemctl restart ssh
+        fi
+        
+        print_ok "SSH پیکربندی شد"
     fi
+}
+
+configure_haproxy() {
+    print_info "بررسی HAProxy..."
     
-    # ریستارت SSH
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-    
-    msg_ok "SSH بهینه شد ✓"
+    if systemctl is-active --quiet haproxy 2>/dev/null; then
+        print_ok "HAProxy فعال است"
+    else
+        systemctl enable haproxy 2>/dev/null
+        print_ok "HAProxy فعال شد"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              تنظیم فایروال
+#                              ایجاد alias و شورتکات
 # ═══════════════════════════════════════════════════════════════════════════════
-setup_firewall() {
-    msg_info "تنظیم قوانین فایروال..."
+create_shortcuts() {
+    print_info "ایجاد شورتکات‌ها..."
     
-    local ports=(22 443 80 2001 2002 2003 8404 8443 2096)
-    
-    # UFW
-    if command -v ufw &>/dev/null; then
-        for port in "${ports[@]}"; do
-            ufw allow "$port/tcp" >/dev/null 2>&1 || true
-        done
-        msg_ok "UFW تنظیم شد ✓"
-        return 0
+    # اضافه کردن به PATH اگر نیست
+    if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
+        echo 'export PATH=$PATH:/usr/local/bin' >> /etc/profile
     fi
     
-    # Firewalld
-    if command -v firewall-cmd &>/dev/null; then
-        for port in "${ports[@]}"; do
-            firewall-cmd --permanent --add-port="$port/tcp" >/dev/null 2>&1 || true
-        done
-        firewall-cmd --reload >/dev/null 2>&1 || true
-        msg_ok "Firewalld تنظیم شد ✓"
-        return 0
+    # ایجاد alias در bashrc
+    local bashrc="/root/.bashrc"
+    if [[ -f "$bashrc" ]]; then
+        if ! grep -q "alias sshsaeed=" "$bashrc"; then
+            echo "" >> "$bashrc"
+            echo "# SSHSaeed Tunnel Manager" >> "$bashrc"
+            echo "alias sshsaeed='/usr/local/bin/sshsaeed'" >> "$bashrc"
+        fi
     fi
     
-    # IPTables
-    for port in "${ports[@]}"; do
-        iptables -A INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
-    done
-    msg_ok "IPTables تنظیم شد ✓"
+    # ایجاد symlink
+    if [[ -f "${INSTALL_PATH}" ]] && [[ ! -L "/usr/bin/sshsaeed" ]]; then
+        ln -sf "${INSTALL_PATH}" /usr/bin/sshsaeed 2>/dev/null
+    fi
+    
+    print_ok "شورتکات‌ها ایجاد شدند"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#                              پیام پایان نصب
+#                              نمایش اطلاعات نهایی
 # ═══════════════════════════════════════════════════════════════════════════════
 show_completion() {
     echo ""
-    printf "${G}"
-    cat << "EOF"
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║                                                               ║
-    ║            ✅ نصب با موفقیت انجام شد! ✅                     ║
-    ║                                                               ║
-    ╚═══════════════════════════════════════════════════════════════╝
-EOF
-    printf "${N}"
-    
-    echo ""
-    printf "    ${C}┌─────────────────────────────────────────────────────────┐${N}\n"
-    printf "    ${C}│${N}                  ${W}🚀 نحوه استفاده${N}                       ${C}│${N}\n"
-    printf "    ${C}├─────────────────────────────────────────────────────────┤${N}\n"
-    printf "    ${C}│${N}                                                         ${C}│${N}\n"
-    printf "    ${C}│${N}   برای اجرای پنل، دستور زیر را وارد کنید:              ${C}│${N}\n"
-    printf "    ${C}│${N}                                                         ${C}│${N}\n"
-    printf "    ${C}│${N}              ${Y}sshsaeed${N}                                  ${C}│${N}\n"
-    printf "    ${C}│${N}                                                         ${C}│${N}\n"
-    printf "    ${C}└─────────────────────────────────────────────────────────┘${N}\n"
-    
-    echo ""
-    printf "    ${M}┌─────────────────────────────────────────────────────────┐${N}\n"
-    printf "    ${M}│${N}               ${W}📁 اطلاعات نصب${N}                           ${M}│${N}\n"
-    printf "    ${M}├─────────────────────────────────────────────────────────┤${N}\n"
-    printf "    ${M}│${N}  نسخه:        ${G}%-40s${N}${M}│${N}\n" "$VERSION"
-    printf "    ${M}│${N}  مسیر کانفیگ: ${G}%-40s${N}${M}│${N}\n" "$CONFIG_DIR"
-    printf "    ${M}│${N}  فایل لاگ:    ${G}%-40s${N}${M}│${N}\n" "$LOG_FILE"
-    printf "    ${M}│${N}  دستور:       ${G}%-40s${N}${M}│${N}\n" "sshsaeed"
-    printf "    ${M}└─────────────────────────────────────────────────────────┘${N}\n"
-    
-    echo ""
-    printf "    ${C}┌─────────────────────────────────────────────────────────┐${N}\n"
-    printf "    ${C}│${N}                 ${W}✨ قابلیت‌ها${N}                            ${C}│${N}\n"
-    printf "    ${C}├─────────────────────────────────────────────────────────┤${N}\n"
-    printf "    ${C}│${N}  ✦ 3 تانل SSH با Load Balancing                        ${C}│${N}\n"
-    printf "    ${C}│${N}  ✦ HAProxy برای توزیع بار                               ${C}│${N}\n"
-    printf "    ${C}│${N}  ✦ رمزنگاری AES-128-GCM                                 ${C}│${N}\n"
-    printf "    ${C}│${N}  ✦ AutoSSH برای اتصال مجدد خودکار                       ${C}│${N}\n"
-    printf "    ${C}│${N}  ✦ بهینه‌سازی BBR                                       ${C}│${N}\n"
-    printf "    ${C}│${N}  ✦ پنل مدیریت حرفه‌ای                                   ${C}│${N}\n"
-    printf "    ${C}└─────────────────────────────────────────────────────────┘${N}\n"
-    
-    echo ""
-    printf "    ${GR}═══════════════════════════════════════════════════════════════${N}\n"
-    printf "    ${W}GitHub:${N} ${B}${GITHUB_URL}${N}\n"
-    printf "    ${GR}═══════════════════════════════════════════════════════════════${N}\n"
-    echo ""
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              حذف نصب
-# ═══════════════════════════════════════════════════════════════════════════════
-uninstall() {
-    show_banner
-    
-    printf "    ${Y}╔═══════════════════════════════════════════════════════════════╗${N}\n"
-    printf "    ${Y}║                    ⚠️  حالت حذف                               ║${N}\n"
-    printf "    ${Y}╚═══════════════════════════════════════════════════════════════╝${N}\n"
-    echo ""
-    
-    read -p "$(printf "    ${R}[!]${N} آیا مطمئن هستید؟ [y/N]: ")" confirm
-    
-    if [[ "${confirm,,}" != "y" ]]; then
-        msg_info "حذف لغو شد"
-        exit 0
-    fi
-    
-    echo ""
-    print_step "حذف SSHSaeed"
-    
-    # توقف سرویس‌ها
-    msg_info "توقف سرویس‌های تانل..."
-    for i in 1 2 3; do
-        systemctl stop "sshsaeed-tunnel${i}" 2>/dev/null || true
-        systemctl disable "sshsaeed-tunnel${i}" 2>/dev/null || true
-        rm -f "/etc/systemd/system/sshsaeed-tunnel${i}.service" 2>/dev/null || true
-    done
-    msg_ok "سرویس‌های تانل متوقف شد"
-    
-    # توقف HAProxy
-    msg_info "توقف HAProxy..."
-    systemctl stop haproxy 2>/dev/null || true
-    msg_ok "HAProxy متوقف شد"
-    
-    systemctl daemon-reload 2>/dev/null || true
-    
-    # حذف فایل‌ها
-    msg_info "حذف فایل‌ها..."
-    rm -rf "$CONFIG_DIR"
-    rm -f "$INSTALL_PATH"
-    rm -f "$LOG_FILE"
-    rm -f "/root/.ssh/sshsaeed_ed25519"
-    rm -f "/root/.ssh/sshsaeed_ed25519.pub"
-    msg_ok "فایل‌ها حذف شد"
-    
-    # حذف کاربر تانل
-    msg_info "حذف کاربر tunnel..."
-    userdel -r tunnel 2>/dev/null || true
-    msg_ok "کاربر حذف شد"
-    
-    echo ""
-    printf "${G}"
-    cat << "EOF"
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║            ✅ حذف با موفقیت انجام شد! ✅                     ║
-    ╚═══════════════════════════════════════════════════════════════╝
-EOF
-    printf "${N}"
-    echo ""
-    printf "    ${W}برای نصب مجدد:${N}\n"
-    printf "    ${Y}bash <(curl -fsSL ${REPO_RAW}/install.sh)${N}\n"
-    echo ""
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              راهنما
-# ═══════════════════════════════════════════════════════════════════════════════
-show_help() {
-    echo ""
-    printf "${C}SSHSaeed Installer - راهنما${N}\n"
-    echo ""
-    printf "${W}استفاده:${N}\n"
-    echo "  bash install.sh [OPTIONS]"
-    echo ""
-    printf "${W}گزینه‌ها:${N}\n"
-    echo "  -h, --help        نمایش این راهنما"
-    echo "  -u, --uninstall   حذف SSHSaeed"
-    echo "  -v, --version     نمایش نسخه"
-    echo ""
-    printf "${W}مثال‌ها:${N}\n"
-    echo "  # نصب"
-    echo "  bash <(curl -fsSL ${REPO_RAW}/install.sh)"
-    echo ""
-    echo "  # حذف"
-    echo "  bash <(curl -fsSL ${REPO_RAW}/install.sh) --uninstall"
+    printf "    ${G}╔═══════════════════════════════════════════════════════════╗${N}\n"
+    printf "    ${G}║                                                           ║${N}\n"
+    printf "    ${G}║${N}     ${W}✓ نصب با موفقیت انجام شد!${N}                           ${G}║${N}\n"
+    printf "    ${G}║                                                           ║${N}\n"
+    printf "    ${G}╠═══════════════════════════════════════════════════════════╣${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}║${N}  ${Y}برای ورود به پنل مدیریت تانل:${N}                         ${G}║${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}║${N}      ${C}${BOLD}sshsaeed${N}                                           ${G}║${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}║${N}  ${GR}یا:${N}  ${C}/usr/local/bin/sshsaeed${N}                         ${G}║${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}╠═══════════════════════════════════════════════════════════╣${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}║${N}  ${M}مسیر نصب:${N}    /usr/local/bin/sshsaeed                  ${G}║${N}\n"
+    printf "    ${G}║${N}  ${M}تنظیمات:${N}     /etc/sshsaeed/                           ${G}║${N}\n"
+    printf "    ${G}║${N}  ${M}لاگ:${N}         /var/log/sshsaeed.log                    ${G}║${N}\n"
+    printf "    ${G}║${N}  ${M}نسخه:${N}        ${SCRIPT_VERSION}                                        ${G}║${N}\n"
+    printf "    ${G}║${N}                                                           ${G}║${N}\n"
+    printf "    ${G}╚═══════════════════════════════════════════════════════════╝${N}\n"
     echo ""
 }
 
@@ -524,80 +387,80 @@ show_help() {
 #                              تابع اصلی
 # ═══════════════════════════════════════════════════════════════════════════════
 main() {
-    # پردازش آرگومان‌ها
-    case "$1" in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        -u|--uninstall)
-            check_root
-            uninstall
-            exit 0
-            ;;
-        -v|--version)
-            echo "SSHSaeed Installer v$VERSION"
-            exit 0
-            ;;
-    esac
+    print_banner
     
-    # نمایش بنر
-    show_banner
+    local total_steps=8
+    local current_step=0
     
-    printf "    ${W}شروع فرآیند نصب...${N}\n"
-    sleep 1
-    
-    # مرحله 1: بررسی سیستم
-    print_step "مرحله 1/7: بررسی سیستم"
+    # مرحله 1: بررسی root
+    ((current_step++))
+    print_step $current_step $total_steps "بررسی دسترسی root"
     check_root
-    detect_os
+    print_ok "دسترسی root تأیید شد"
+    echo ""
     
-    # مرحله 2: آپدیت سیستم
-    print_step "مرحله 2/7: آپدیت سیستم"
-    update_system
+    # مرحله 2: بررسی سیستم‌عامل
+    ((current_step++))
+    print_step $current_step $total_steps "بررسی سیستم‌عامل"
+    check_os
+    echo ""
     
-    # مرحله 3: نصب وابستگی‌ها
-    print_step "مرحله 3/7: نصب وابستگی‌ها"
-    install_dependencies
+    # مرحله 3: بررسی اینترنت
+    ((current_step++))
+    print_step $current_step $total_steps "بررسی اتصال اینترنت"
+    if ! check_internet; then
+        print_err "بدون اینترنت امکان نصب وجود ندارد"
+        exit 1
+    fi
+    echo ""
     
-    # مرحله 4: ایجاد دایرکتوری‌ها
-    print_step "مرحله 4/7: ایجاد دایرکتوری‌ها"
-    create_directories
+    # مرحله 4: نصب پکیج‌ها
+    ((current_step++))
+    print_step $current_step $total_steps "نصب پکیج‌های مورد نیاز"
+    install_packages
+    echo ""
     
     # مرحله 5: دانلود اسکریپت
-    print_step "مرحله 5/7: دانلود پنل"
-    download_script
-    create_command
+    ((current_step++))
+    print_step $current_step $total_steps "دانلود اسکریپت اصلی"
+    if ! download_main_script; then
+        print_err "خطا در دانلود - نصب متوقف شد"
+        exit 1
+    fi
+    echo ""
     
-    # مرحله 6: بهینه‌سازی سیستم
-    print_step "مرحله 6/7: بهینه‌سازی سیستم"
-    setup_bbr
-    optimize_ssh
+    # مرحله 6: اصلاح متغیرها
+    ((current_step++))
+    print_step $current_step $total_steps "اصلاح سازگاری"
+    fix_script_variables
+    set_permissions
+    echo ""
     
-    # مرحله 7: تنظیم فایروال
-    print_step "مرحله 7/7: تنظیم فایروال"
-    setup_firewall
+    # مرحله 7: پیکربندی سرویس‌ها
+    ((current_step++))
+    print_step $current_step $total_steps "پیکربندی سرویس‌ها"
+    configure_ssh
+    configure_haproxy
+    echo ""
     
-    # پایان نصب
+    # مرحله 8: ایجاد شورتکات
+    ((current_step++))
+    print_step $current_step $total_steps "ایجاد شورتکات‌ها"
+    create_shortcuts
+    echo ""
+    
+    # نمایش اطلاعات نهایی
     show_completion
     
-    # اجرای پنل؟
-    echo ""
-    read -p "$(printf "    ${C}[?]${N} آیا می‌خواهید پنل را الان اجرا کنید؟ [Y/n]: ")" run_now
+    # پرسش برای اجرای پنل
+    printf "    ${Y}آیا می‌خواهید پنل را اجرا کنید؟ [Y/n]:${N} "
+    read -r run_panel
     
-    if [[ "${run_now,,}" != "n" ]]; then
+    if [[ "$run_panel" != "n" ]] && [[ "$run_panel" != "N" ]]; then
         echo ""
-        msg_info "در حال اجرای SSHSaeed..."
-        sleep 1
-        sshsaeed
-    else
-        echo ""
-        msg_info "برای اجرا از دستور 'sshsaeed' استفاده کنید"
-        echo ""
+        exec "${INSTALL_PATH}"
     fi
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              اجرا
-# ═══════════════════════════════════════════════════════════════════════════════
+# اجرای تابع اصلی
 main "$@"
